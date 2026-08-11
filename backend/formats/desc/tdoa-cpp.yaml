@@ -1,0 +1,15 @@
+name: tdoa-cpp
+title: C++ 组件日志(File.cpp(行号) [app] -> 消息,GBK)
+kind: regex
+line_regex: ^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+(?P<logger>\S+\(\d+\))\s+\[(?P<tag>[^\]]+)\]\s+->\s+(?P<message>.*)$
+field_map:
+  ts: ts_raw
+  logger: logger
+  message: message
+ts_field: ts
+ts_formats:
+- '%Y-%m-%d %H:%M:%S'
+encoding: gbk
+status: draft
+note: 实测于用户真实样本(mix_logs/Monitor、BugReport,同式); logger 为 源文件(行号) 形态(如 Monitor.cpp(144)),tag
+  原文进 extras; 行内时间为本地时间,归一走源声明时区。

@@ -1,0 +1,17 @@
+name: app-logback
+title: 应用 Logback 日志([  ] 时间 线程 级别 消息,带堆栈合并)
+kind: regex
+line_regex: ^\[\s*\]\s+(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3})\s+(?P<thread>\S+)\s+(?P<level>[A-Z]+)\s+(?P<message>.*)$
+field_map:
+  ts: ts_raw
+  level: level
+  message: message
+  thread: logger
+ts_field: ts
+ts_formats:
+- '%Y-%m-%d %H:%M:%S,%f'
+multiline:
+  start_regex: ^\[\s*\]\s+\d{4}-\d{2}-\d{2}
+status: draft
+note: 实测于用户真实样本(2025-04-27.catalina.out,149806 行,dubbo/ibatis 应用); thread 映射 logger
+  槽位(归一词表无 thread,如实归入);行内时间为本地时间, 归一走源声明时区;堆栈续行合并计数如实。

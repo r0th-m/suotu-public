@@ -1,0 +1,38 @@
+# 排除清单 KB:已知爬虫与库默认 UA token(cross_key_same_value 算子用)
+# 数据文件,人可编辑;加载即校验(缺文件/坏结构 = RuleError,不静默)。
+# 匹配语义:值小写化后子串包含(2026-08-05 实测定性:真实爬虫 UA 形如
+# 'Mozilla/5.0 (compatible; Googlebot/2.1; ...)',词根不在开头,
+# startswith 失效,改 contains;宁漏勿冤——排除只缩小聚簇,不产生命中)。
+id: common_uas
+title: 常见爬虫与库默认 UA token 排除清单
+tokens:
+  # 爬虫/蜘蛛(含 Googlebot/Baiduspider 等 compatible 形态)
+  - googlebot
+  - baiduspider
+  - bingbot
+  - yandexbot
+  - duckduckbot
+  - slurp
+  - spider
+  - crawler
+  - bot/
+  - bot;
+  - bot(
+  # 命令行/库默认 UA
+  - curl/
+  - wget/
+  - python-requests
+  - python-urllib
+  - go-http-client
+  - java/
+  - okhttp
+  - apache-httpclient
+  - node-fetch
+  - axios/
+  - libwww-perl
+  - httpie
+  - scrapy
+note: >-
+  依据:公开已知爬虫标识(Googlebot/Baiduspider 等均含 bot/spider 词根)
+  与主流 HTTP 客户端库默认 UA 前缀。宁漏勿冤:排除只缩小聚簇范围,
+  不产生任何命中;新前缀人审后追加,不改代码。

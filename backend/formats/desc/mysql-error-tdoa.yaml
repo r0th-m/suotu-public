@@ -1,0 +1,17 @@
+name: mysql-error-tdoa
+title: MySQL 错误日志(通达 OA 系,GBK,错误块合并)
+kind: regex
+line_regex: ^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s*$
+field_map:
+  ts: ts_raw
+ts_field: ts
+ts_formats:
+- '%Y-%m-%d %H:%M:%S'
+multiline:
+  start_regex: '^\[\d{4}-\d{2}-\d{2} '
+  max_continuation_lines: 200
+  max_block_bytes: 262144
+encoding: gbk
+status: draft
+note: 实测于用户真实样本(mix_logs/mysql_error.log,GBK 编码); 起始行仅时间戳,错误全文(Table doesn't exist/SQL
+  语句等)在合并块 raw 留证,全文 LIKE 可达;norm 只有时间字段,不硬拆错误结构(块内结构 随版本漂移,不猜);行内时间为本地时间,归一走源声明时区。

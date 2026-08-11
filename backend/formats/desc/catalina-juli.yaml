@@ -1,0 +1,17 @@
+name: catalina-juli
+title: Tomcat catalina.out(JULI,中文级别名,带堆栈合并)
+kind: regex
+line_regex: ^(?P<ts>\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2}\.\d{3})\s+(?P<level>\S+)\s+\[(?P<thread>[^\]]+)\]\s+(?P<logger>\S+)\s+(?P<message>.*)$
+field_map:
+  ts: ts_raw
+  level: level
+  logger: logger
+  message: message
+ts_field: ts
+ts_formats:
+- '%d-%b-%Y %H:%M:%S.%f'
+multiline:
+  start_regex: '^\d{2}-[A-Za-z]{3}-\d{4} '
+status: draft
+note: 实测于用户真实样本(catalina.out,Tomcat 中文版,级别名为 信息/警告/严重, 原文进 level 不翻译);%b 月份缩写按英文(Apr
+  等,C locale,中文月份名 未实测,如实标注);行内时间为本地时间,归一走源声明时区;堆栈续行合并 计数如实。

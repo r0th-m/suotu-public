@@ -1,0 +1,14 @@
+# 异键同值聚簇:稀有 UA 出现在多个不同源 IP(疑似同源聚簇,弱信号)
+id: rare-ua-cross-ip
+title: 稀有 UA 跨 IP 复现(疑似同源聚簇)
+operator: cross_key_same_value
+severity: medium
+value_field: ua
+key_fields: [src_ip]
+min_keys: 2                      # ≥2 个不同 IP
+max_value_freq: 50               # 稀有度门槛:值全局频次 < 50(排除高频爬虫/工具默认)
+exclude_kb: common_uas           # 排除清单 KB(backend/kb/common_uas.yaml,前缀匹配,人可编辑)
+note: >-
+  Diamond Model capability pivot;概率性弱信号:同一稀有 UA 跨 IP 可能是
+  同一工具不同跳板,也可能是撞库代理池默认配置——永不写「同一攻击者」,
+  命中只进待审区交人复核。

@@ -1,0 +1,12 @@
+# XSS:javascript: 伪协议(常见于重定向/跳转参数投毒)
+id: xss-javascript-protocol
+title: "XSS javascript: 伪协议特征"
+severity: medium
+target: web
+match:
+  query:
+    - "javascript:"
+    - "javascript%3a"
+note: >-
+  javascript: 伪协议作为跳转参数值(url=/redirect=/next=)是公开 XSS
+  手法(OWASP 测试指南);正常业务几乎不会把该协议字面量放进查询串。

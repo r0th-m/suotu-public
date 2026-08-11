@@ -1,0 +1,67 @@
+# Web 访问日志常见值确定性解释库(M3,§8 KB 解释器)
+# 数据文件,人可编辑;加载即校验(坏结构 = KBError,不静默)。
+# 匹配语义:path/ua 小写化子串包含(首个命中胜出,专有解释放前面);
+# status 精确三位数字。未覆盖一律 covered:false,不硬解释(宁缺勿滥)。
+id: web_explain
+title: Web 访问日志常见 path/UA/状态码确定性解释
+
+paths:
+  # 管理后台与认证入口(爆破/撞库高发面)
+  - match: /wp-login.php
+    text: WordPress 登录页,爆破与撞库的高发目标;关注失败频次与来源集中度。
+  - match: /xmlrpc.php
+    text: WordPress XML-RPC 接口,常被滥用于放大爆破与 pingback 扫描。
+  - match: /admin
+    text: 管理后台路径,未授权访问尝试与爆破的常见目标;结合状态码看是否得手。
+  - match: /phpmyadmin
+    text: phpMyAdmin 数据库管理入口,暴露即高风险,常见于扫描器字典。
+  # 敏感文件与源码泄露面
+  - match: /.git/
+    text: Git 仓库元数据路径,可下载即源码泄露;任何 2xx 都应立即核实。
+  - match: /.env
+    text: 环境配置文件路径,常含凭据;可下载即凭据泄露。
+  - match: /.svn/
+    text: SVN 元数据路径,可下载即源码泄露。
+  - match: /backup
+    text: 备份文件路径,常见源码/数据泄露面;关注扩展名与状态码。
+  - match: /.well-known/
+    text: 标准 well-known 路径(ACME 证书挑战等),多为正常流量,结合来源判断。
+
+uas:
+  # 扫描器与攻击工具(确定性识别,词根小写子串)
+  - match: sqlmap
+    text: sqlmap 自动化 SQL 注入工具,出现即攻击行为,重点核对其请求的结果。
+  - match: nikto
+    text: Nikto Web 漏洞扫描器。
+  - match: nmap
+    text: Nmap 脚本引擎发起的 HTTP 探测。
+  - match: masscan
+    text: masscan 高速端口扫描器的 HTTP 探针。
+  - match: acunetix
+    text: Acunetix 商业漏洞扫描器。
+  - match: nuclei
+    text: Nuclei 模板化漏洞扫描器。
+  # 命令行与库默认 UA(合法与滥用两解,如实标注)
+  - match: curl/
+    text: curl 命令行客户端默认 UA;运维脚本与攻击者都在用,结合请求内容判断。
+  - match: wget/
+    text: wget 命令行下载工具默认 UA;常用于拉取 payload,两解。
+  - match: python-requests
+    text: Python requests 库默认 UA;脚本化访问,两解。
+  - match: go-http-client
+    text: Go net/http 默认 UA;扫描器与自研工具常见,两解。
+  # 主流浏览器(正常访问基线)
+  - match: mozilla/5.0
+    text: 主流浏览器 UA 前缀(Chrome/Firefox/Safari/Edge 均以 Mozilla/5.0 开头),正常访问基线。
+
+statuses:
+  "200": 请求成功;攻击面路径上的 200 需核实是否得手。
+  "301": 永久重定向;本身无害,关注重定向目标。
+  "302": 临时重定向;登录后 302 到后台是会话建立的信号,结合来源核对。
+  "400": 请求格式错误;畸形请求探测或扫描器噪声常见。
+  "401": 未认证;认证挑战,爆破过程中的正常响应。
+  "403": 禁止访问;目录探测/越权尝试被拦,频次与路径分布值得看。
+  "404": 不存在;扫描器字典探测的典型产物,单源高频 404 即扫描信号。
+  "500": 服务端错误;注入/Fuzz 触发应用异常的间接信号,值得核对同一来源前后文。
+  "502": 网关错误;后端不可用或代理异常,运维面信号。
+  "503": 服务不可用;过载或维护,也可能是 DoS 的受害者侧表现。

@@ -1,0 +1,19 @@
+name: oa-web-log
+title: 通达 OA 应用操作日志(GBK,uid/用户/路径/session,body 合并)
+kind: regex
+line_regex: ^\[(?P<ts>\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+(?P<uid>\S*)\s+-\s+(?P<actor>.*?)\s+-\s+(?P<path>\S+)\s+-\s+(?P<reserved>\S*)\s+-\s+(?P<session>\S+)\s+-\s+(?P<url>.*)$
+field_map:
+  ts: ts_raw
+  actor: actor
+  path: path
+ts_field: ts
+ts_formats:
+- '%m-%d %H:%M:%S'
+multiline:
+  start_regex: ^\[\d{2}-\d{2} \d{2}:\d{2}:\d{2}\]
+  max_continuation_lines: 500
+  max_block_bytes: 524288
+encoding: gbk
+status: draft
+note: 实测于用户真实样本(mix_logs/oa/2002/ddhttp.log、jserror.log); uid/actor 可为空(匿名/任务),uid
+  与 reserved/session/url 未映射进 extras 留证;PHP array/JSON body 跨行合并进 raw(全文检索可达,结构 随版本漂移不硬拆);简写日期无年份,跨年处如实归属解析纪律(不猜)。

@@ -1,0 +1,26 @@
+# 命令执行/代码执行:高危函数调用与命令参数族
+id: cmd-exec-params
+title: 命令执行/代码执行参数特征
+severity: high
+target: web
+match:
+  query:
+    - "cmd="
+    - "exec="
+    - ";id"
+    - ";cat%20"
+    - "|id"
+    - "eval("
+    - "assert("
+    - "system("
+    - "passthru("
+    - "shell_exec("
+    - "/bin/sh"
+    - "/bin/bash"
+    - "whoami"
+note: >-
+  PHP 系代码执行函数(eval/assert/system/passthru/shell_exec)、shell 路径
+  (/bin/sh、/bin/bash)与命令拼接符(;id、|id)出现在查询串里是命令注入
+  的公开标志(OWASP Command Injection);cmd=/exec= 参数名是 webshell
+  与命令注入探测的惯用形状。whoami 单发可能误报,严重级已按族整体给 high,
+  人审时再逐条定夺(判断权归人)。

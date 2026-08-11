@@ -1,0 +1,13 @@
+# 同键变率突刺:单 IP 请求速率 z-score 突刺(基线=该键自身时间桶分布)
+id: ip-rate-spike
+title: 单 IP 请求速率突刺
+operator: rate_spike
+severity: medium
+key_fields: [src_ip]
+bucket_seconds: 60
+zscore: 4.0                      # 键内时间桶计数的 z-score 阈值
+min_bucket_count: 30             # 突刺桶最小绝对量(防小基数)
+note: >-
+  基线只取该键自身有事件的时间桶(空桶不补零,稀疏长空档不虚构基线);
+  ts_utc 全 NULL 的源如实跳过(时间未知不硬算)。突刺≠攻击(秒杀/定时
+  任务同样突刺),命中只进待审区交人复核。

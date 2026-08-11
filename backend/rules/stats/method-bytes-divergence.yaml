@@ -1,0 +1,14 @@
+# 同键异值分化:同路径+同 IP+同 UA 的不同方法返回长度显著分化
+id: method-bytes-divergence
+title: 同键跨方法返回长度分化
+operator: same_key_divergence
+severity: medium
+key_fields: [path, src_ip, ua]   # 分组键(norm 字段名)
+diverge_field: method            # 分化维度
+metric: bytes                    # bytes|status
+min_group_events: 10             # 组内最小事件数(防小样本噪声)
+diverge_ratio: 3.0               # 组内按 diverge_field 分桶后 metric 均值 max/min ≥ 3
+note: >-
+  依据(实战案例:同路径同 IP 同 UA 不同方法返回长度分化 → 0day 狩猎模式)。
+  分化≠异常:正常业务也可能 GET/POST 返回体天然不同,命中只进待审区,
+  交人复核,永不自动定论。

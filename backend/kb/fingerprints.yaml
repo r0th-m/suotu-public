@@ -1,0 +1,22 @@
+# 格式指纹库(数据驱动,人可换;解析器本体在 backend/app/formats/)
+# line_patterns:行特征正则(预处理参考信号)
+# header_patterns:头行探测(如 IIS W3C 的 # 指令行)
+# 置信度 = 真实解析器抽样试解析命中率(见 backend/app/fingerprint.py)
+formats:
+  - format_id: nginx_combined
+    name: nginx combined access log
+    line_patterns:
+      - '^\S+ \S+ \S+ \[\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}\] "[^"]*" \d{3} \S+ "[^"]*" "[^"]*"'
+    header_patterns: []
+  - format_id: apache_common
+    name: apache common access log (CLF)
+    line_patterns:
+      - '^\S+ \S+ \S+ \[\d{2}/[A-Za-z]{3}/\d{4}:\d{2}:\d{2}:\d{2} [+-]\d{4}\] "[^"]*" \d{3} \S+\s*$'
+    header_patterns: []
+  - format_id: iis_w3c
+    name: IIS W3C extended log
+    line_patterns:
+      - '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \S'
+    header_patterns:
+      - '^#Software:'
+      - '^#Fields:'

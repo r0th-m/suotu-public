@@ -1,0 +1,20 @@
+name: yii-app
+title: Yii 框架应用日志(带 dump 合并)
+kind: regex
+line_regex: ^(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s+\[(?P<src_ip>[^\]]*)\]\[(?P<user>[^\]]*)\]\[(?P<session>[^\]]*)\]\[(?P<level>[^\]]*)\]\[(?P<logger>[^\]]*)\]\s+(?P<message>.*)$
+field_map:
+  ts: ts_raw
+  src_ip: src_ip
+  level: level
+  logger: logger
+  message: message
+ts_field: ts
+ts_formats:
+- '%Y-%m-%d %H:%M:%S'
+multiline:
+  start_regex: ^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\s+\[
+  max_continuation_lines: 500
+  max_block_bytes: 524288
+status: draft
+note: 实测于用户真实样本(mix_logs/appbuilder/logs/app.log,Yii2 标准日志 行式,UTF-8);user/session
+  未映射进 extras 留证;$_COOKIE 等 dump 跨行合并进 raw;Yii 官方格式,任何 Yii2 应用通用(非样本特定)。

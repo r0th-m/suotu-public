@@ -1,0 +1,14 @@
+name: tdoa-component
+title: 通达 OA 组件服务日志(GBK,八组件同式)
+kind: regex
+line_regex: ^\[(?P<ts>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]\s+(?P<message>.*)$
+field_map:
+  ts: ts_raw
+  message: message
+ts_field: ts
+ts_formats:
+- '%Y-%m-%d %H:%M:%S'
+encoding: gbk
+status: draft
+note: 实测于用户真实样本 mix_logs 八个组件目录(服务启停/连接/线程管理类 消息);与 tdoa-officeweb 同式(OfficeWeb 有独立条目,本条目面向其余
+  组件,避免一个名字绑定一个组件);行内时间为本地时间,归一走源声明时区。

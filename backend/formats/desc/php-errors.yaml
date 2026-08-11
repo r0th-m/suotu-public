@@ -1,0 +1,17 @@
+name: php-errors
+title: PHP 错误日志(GBK,Warning/Notice/Fatal)
+kind: regex
+line_regex: ^\[(?P<ts>\d{2}-[A-Za-z]{3}-\d{4} \d{2}:\d{2}:\d{2})(?P<tzhint>[^\]]*)\]\s+PHP\s+(?P<level>[\w
+  ]+?):\s+(?P<message>.*)$
+field_map:
+  ts: ts_raw
+  level: level
+  message: message
+ts_field: ts
+ts_formats:
+- '%d-%b-%Y %H:%M:%S'
+encoding: gbk
+status: draft
+note: 实测于用户真实样本(mix_logs/php_errors.log,GBK 编码); 方括号内时区段(Etc/GMT-8)不入归一字段,在 extras.tzhint
+  留证, 归一按源声明时区(内嵌时区与声明不一致是源登记问题,不 silently 裁决); 级别为 PHP 原生级别名(Warning/Notice/Fatal
+  error/Deprecated 等)。
