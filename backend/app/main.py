@@ -1,8 +1,8 @@
 """索图 FastAPI 入口(M0 入库/检索 + M1 规则引擎/待审区 + M2 统计规则/联动
 + M3 AI 工具层/L2 播种/L3 精读/KB 解释器 + M4 描述文件治理/AI 起草
-+ M4 封存导出/登录认证/主机取证平台实体互查 + M5 交流区/即席聚合
-+ M6 AI 设置面板(多厂商,移植自主机取证平台)
-+ 运行日志(logging_setup/logview,移植自主机取证平台 v1.2.0:app/error/operation
++ M4 封存导出/登录认证/树庭实体互查 + M5 交流区/即席聚合
++ M6 AI 设置面板(多厂商,移植自树庭)
++ 运行日志(logging_setup/logview,移植自树庭 v1.2.0:app/error/operation
   三文件,与审计链严格分离)。
 
 M4 起全局认证闸:除 /healthz /auth/login /auth/setup 外全部端点要登录态;
@@ -33,12 +33,12 @@ from . import ai, analysis, auth, bridge, chat, config, db, duck, \
     formatdesc, ingest, kb_explainer, logging_setup, logview, query, \
     rules, seal, vault, viewer
 
-# 运行日志(移植自主机取证平台 v1.2.0):绑定 data/logs/ 三个文件(app/error/operation);
+# 运行日志(移植自树庭 v1.2.0):绑定 data/logs/ 三个文件(app/error/operation);
 # 与审计哈希链严格分离,互不混入
 logging_setup.setup_logging()
 
 # 免认证白名单:健康检查 + 登录/首启引导 + 静态前端入口(SPA 页面本身公开,
-# React 启动后调 /auth/me 自判登录态再渲染登录页;API 一律认证,语义同主机取证平台)
+# React 启动后调 /auth/me 自判登录态再渲染登录页;API 一律认证,语义同树庭)
 _AUTH_WHITELIST = {"/healthz", "/auth/login", "/auth/setup"}
 
 
@@ -63,7 +63,7 @@ def _auth_guard(request: Request) -> None:
         request.state.username = auth.require_user(request)
 
 
-APP_VERSION = "v1.0.0"  # 首发开源版(2026-08-11)
+APP_VERSION = "v1.1.0"  # 2026-08-13(MCP 服务端/外发双闸/并行化)
 
 app = FastAPI(title="索图", version=APP_VERSION,
               dependencies=[Depends(_auth_guard)])
@@ -227,7 +227,7 @@ def upload_source(case_id: str, file: UploadFile = File(...),
     """上传日志文件或 zip → 登记 + 指纹建议(只建议,不确认)。
 
     evidence_kind=supplementary 登记为补充证据(人随时补的材料,
-    打标随检索层可查;2026-08-09,实战案例工作方式沉淀)。
+    打标随检索层可查;2026-08-09,20260807 案工作方式沉淀)。
     """
     with _conn() as conn:
         _get_case_or_404(conn, case_id)
@@ -606,7 +606,7 @@ def ai_status():
     return ai.status()
 
 
-# ------------------------------------------------------------ M6 AI 设置(移植自主机取证平台)
+# ------------------------------------------------------------ M6 AI 设置(移植自树庭)
 
 class AiConfigIn(BaseModel):
     provider: str = Field(
@@ -847,13 +847,13 @@ def verify_seal_endpoint(file: UploadFile = File(...)):
         raise HTTPException(e.status, str(e))
 
 
-# ------------------------------------------------------------ M4 主机取证平台实体互查(§9 实体桥 v2)
+# ------------------------------------------------------------ M4 树庭实体互查(§9 实体桥 v2)
 
 @app.get("/bridge/treecourt/entities")
 def bridge_treecourt_entities(value: str = Query(min_length=1)):
-    """按值互查主机取证平台实体(只读,不写任何东西)。
+    """按值互查树庭实体(只读,不写任何东西)。
 
-    主机取证平台不可达/未配置凭据 → available=false + reason 如实(不报错页);
+    树庭不可达/未配置凭据 → available=false + reason 如实(不报错页);
     响应带 source_platform=treecourt(前端联动预留)。
     """
     return bridge.query_entities(value)
