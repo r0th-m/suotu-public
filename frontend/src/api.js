@@ -162,6 +162,14 @@ export const api = {
       method: "PATCH",
       json: { ai_external_blocked: blocked },
     }),
+  // ── MCP 接入(只读端点 + token 管理;2026-08-13) ──
+  mcpStatus: () => req("/mcp-admin/status"),
+  mcpSetEnabled: (enabled) =>
+    req("/mcp-admin/enabled", { method: "POST", json: { enabled } }),
+  mcpCreateToken: (label) =>
+    req("/mcp-admin/tokens", { method: "POST", json: { label } }),
+  mcpRevokeToken: (id) =>
+    req(`/mcp-admin/tokens/${id}/revoke`, { method: "POST" }),
   // 测连表单值(不写 .env、不写审计):成功回模型/延迟,失败回分类 kind
   testAiConfig: ({ provider, baseUrl, model, apiKey }) =>
     req("/ai/config/test", {

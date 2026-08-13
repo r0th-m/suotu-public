@@ -146,6 +146,37 @@ Moonshot/Ollama 本地/自定义 OpenAI 兼容端点），在线厂商保存时�
 ⑧ 收工 → 封存案件(zip 在 data/exports/,可离线校验)
 ```
 
+## MCP 接入（Cherry Studio / Trae 等客户端直驾）
+
+三步接入:
+
+1. 索图顶栏「MCP 接入」→ 开启端点 → 签发 token(**明文只显示一次,立即复制**);
+2. 在客户端的 MCP 配置里填(以 Trae 的 mcp.json 为例,Cherry Studio 同理选
+   「Streamable HTTP / HTTP」类型):
+
+```json
+{
+  "mcpServers": {
+    "suotu": {
+      "url": "http://127.0.0.1:8100/mcp",
+      "headers": {
+        "Authorization": "Bearer st_mcp_××××××××××(换成你刚签发的 token)"
+      }
+    }
+  }
+}
+```
+
+   远程命令型客户端的 `command/args` 写法不适用——我们是远程 HTTP 服务,填
+   `url` + `headers`。若客户端报类型不支持,在 `suotu` 一段内加
+   `"type": "http"`(部分版本写 `"streamableHttp"`)。
+3. 直接问:「索图里有几个案件」「xxx IP 在这批日志里有什么活动」。
+
+纪律(协议层写死):**只读**——不能上传/解析/改裁决/跑扫描;每次调用记审计链;
+检索结果带行数上限与调用限频(30 次/分钟);每条响应都附「原文请回 Web 端
+核对、最终裁决由人完成」的指引;token 可随时在面板吊销。现场便携包不含
+MCP 模块(物理剔除,无此攻击面)。
+
 ## 常见问题
 
 - **点了「播种并精读」没动？** 该源没有 pending 命中——先跑「规则与扫描」。
@@ -164,8 +195,6 @@ Moonshot/Ollama 本地/自定义 OpenAI 兼容端点），在线厂商保存时�
 ```bash
 python -m pytest          # 267 用例:合成样本契约/负样本/判断权断言/单平面契约/并行等价
 ```
-
-> 注:前端需先 `cd frontend && npm install && npm run build`(SPA 入口契约测试依赖 dist)。
 
 纪律:解析器对 spec 写不对值写;AI 产物断言级永不自动入库;单一检索层契约测试
 （漏斗能拿到的,AI 工具必能拿到）;并行/串行派生数据逐条等价（断言级）。

@@ -5,3 +5,4 @@ pyyaml
 pytest
 httpx
 python-multipart
+mcp==2.0.0  # MCP 服务端(Streamable HTTP);版本钉死防协议漂移

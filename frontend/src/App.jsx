@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { sourceColorMap } from "./util.js";
 import LoginGate from "./components/LoginGate.jsx";
 import AiSettingsModal from "./components/AiSettingsModal.jsx";
+import McpModal from "./components/McpModal.jsx";
 import CaseSidebar from "./components/CaseSidebar.jsx";
 import SourcesPane from "./components/SourcesPane.jsx";
 import FormatDescPane from "./components/FormatDescPane.jsx";
@@ -37,6 +38,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [pwOpen, setPwOpen] = useState(false);
   const [aiCfgOpen, setAiCfgOpen] = useState(false); // M6:AI 设置弹窗
+  const [mcpOpen, setMcpOpen] = useState(false); // MCP 接入面板
   const [logOpen, setLogOpen] = useState(false); // 运行日志弹窗(排障,系统级)
 
   const refreshCases = useCallback(async () => {
@@ -217,6 +219,9 @@ export default function App() {
           <button className="link-btn" onClick={() => setAiCfgOpen(true)}>
             AI 设置
           </button>
+          <button className="link-btn" onClick={() => setMcpOpen(true)}>
+            MCP 接入
+          </button>
           <button className="link-btn" onClick={() => setLogOpen(true)}>
             运行日志
           </button>
@@ -230,6 +235,9 @@ export default function App() {
       </header>
 
       {pwOpen && <ChangePasswordModal onClose={() => setPwOpen(false)} />}
+      {mcpOpen && (
+        <McpModal onClose={() => setMcpOpen(false)} />
+      )}
       {aiCfgOpen && (
         <AiSettingsModal
           onClose={() => setAiCfgOpen(false)}

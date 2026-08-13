@@ -199,6 +199,41 @@ on the host-forensics side (read-only; never writes back).
 ⑧ Wrap up → seal the case (zip in data/exports/, verifiable offline)
 ```
 
+## MCP integration (drive SuoTu from Cherry Studio / Trae)
+
+Three steps:
+
+1. Top bar "MCP Access" → enable the endpoint → issue a token (**shown in
+   plaintext only once — copy it immediately**);
+2. Add to your client's MCP config (Trae `mcp.json` example; Cherry Studio:
+   pick "Streamable HTTP / HTTP" type):
+
+```json
+{
+  "mcpServers": {
+    "suotu": {
+      "url": "http://127.0.0.1:8100/mcp",
+      "headers": {
+        "Authorization": "Bearer st_mcp_XXXXXXXXXX (paste your token here)"
+      }
+    }
+  }
+}
+```
+
+   The `command/args` style is for local processes — SuoTu is a remote HTTP
+   service, use `url` + `headers`. If the client rejects the type, add
+   `"type": "http"` (some versions: `"streamableHttp"`) inside the block.
+3. Just ask: "how many cases are in SuoTu", "what activity does IP x.x.x.x
+   have in these logs".
+
+Discipline (enforced at the protocol layer): **read-only** — no upload, no
+parsing, no verdict changes, no scans; every call is audit-logged; results are
+capped and rate-limited; every response carries the reminder that originals are
+verified on the web UI and final judgement belongs to the human. The field
+portable pack ships without the MCP module (physically excluded — no attack
+surface).
+
 ## FAQ
 
 - **"Seed & close-read" does nothing?** The source has no pending hits — run
@@ -225,9 +260,6 @@ python -m pytest          # 267 cases: synthetic-sample contracts / negative
                           # samples / human-verdict assertions / single-plane
                           # contracts / parallel-serial equivalence
 ```
-
-> Note: build the frontend first (`cd frontend && npm install && npm run build`)
-> — the SPA-entry contract test depends on `dist`.
 
 Discipline: parsers are written against specs, not values; AI output never
 enters the store automatically (assertion-level); single-retrieval-layer

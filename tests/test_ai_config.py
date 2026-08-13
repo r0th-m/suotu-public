@@ -1,4 +1,4 @@
-"""M6 AI 设置面板契约测试(移植自主机取证平台,断言级焊死)。
+"""M6 AI 设置面板契约测试(移植自树庭,断言级焊死)。
 
 纪律(同 conftest ai_env):
 - .env 永不进测试:_env_file monkeypatch 到 tmp_path,真实凭据文件不读不写;

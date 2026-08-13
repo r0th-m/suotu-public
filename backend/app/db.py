@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS settings (
   actor TEXT NOT NULL
 );
 
+-- MCP 接入的 API token(2026-08-13):哈希存储,明文只在创建时回一次
+CREATE TABLE IF NOT EXISTS api_tokens (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL,
+  label TEXT,
+  token_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  last_used_at TEXT,
+  revoked_at TEXT
+);
+
 -- 按案件 AI 策略(2026-08-11,合规底线):独立表而非 cases 加列
 CREATE TABLE IF NOT EXISTS case_ai_policy (
   case_id TEXT PRIMARY KEY REFERENCES cases(id),

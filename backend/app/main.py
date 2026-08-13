@@ -44,9 +44,12 @@ _AUTH_WHITELIST = {"/healthz", "/auth/login", "/auth/setup"}
 
 def _is_public_path(path: str) -> bool:
     """公开路径:白名单精确命中 / SPA 入口(/) / 静态资产(/assets/*);
-    其余一律认证(API)。"""
+    其余一律认证(API)。/mcp 走自己的 Bearer token 闸(MCPGateway 内),
+    不进会话白名单——token 认证在网关层完成,这里放行。"""
     if path in _AUTH_WHITELIST or path == "/" or path == "/favicon.ico":
         return True
+    if path == "/mcp" or path.startswith("/mcp/"):
+        return True                          # MCP 端点:token 闸见 mcp_server
     return path.startswith("/assets/")
 
 
@@ -854,6 +857,101 @@ def bridge_treecourt_entities(value: str = Query(min_length=1)):
     响应带 source_platform=treecourt(前端联动预留)。
     """
     return bridge.query_entities(value)
+
+
+# ------------------------------------------------------------ MCP 服务端
+
+try:
+    from . import mcp_server
+    _MCP_AVAILABLE = True
+except ImportError:      # 现场便携包形态(打包时物理剔除 mcp 模块)
+    mcp_server = None
+    _MCP_AVAILABLE = False
+
+
+@app.get("/mcp-admin/status")
+def mcp_status():
+    """MCP 接入状态(开关 + token 数 + 模块在否;内容不敏感)。"""
+    if not _MCP_AVAILABLE:
+        return {"available": False, "enabled": False, "tokens": []}
+    with _conn() as conn:
+        return {"available": True,
+                "enabled": mcp_server.mcp_enabled(conn),
+                "tokens": mcp_server.list_tokens(conn)}
+
+
+class McpEnabledIn(BaseModel):
+    enabled: bool
+
+
+@app.post("/mcp-admin/enabled")
+def mcp_set_enabled(body: McpEnabledIn,
+                    actor: str = Depends(auth.current_username)):
+    """MCP 端点开关(默认关闭;变更进审计链)。"""
+    if not _MCP_AVAILABLE:
+        raise HTTPException(404, "本部署形态不含 MCP 模块(现场便携包)")
+    with _conn() as conn:
+        return mcp_server.set_mcp_enabled(conn, body.enabled, actor)
+
+
+class McpTokenIn(BaseModel):
+    label: str | None = None
+
+
+@app.post("/mcp-admin/tokens", status_code=201)
+def mcp_create_token(body: McpTokenIn,
+                     actor: str = Depends(auth.current_username)):
+    """签发 MCP API token:明文仅此响应一次,库里只存哈希。"""
+    if not _MCP_AVAILABLE:
+        raise HTTPException(404, "本部署形态不含 MCP 模块(现场便携包)")
+    with _conn() as conn:
+        return mcp_server.create_token(conn, actor, body.label)
+
+
+@app.post("/mcp-admin/tokens/{token_id}/revoke")
+def mcp_revoke_token(token_id: str,
+                     actor: str = Depends(auth.current_username)):
+    if not _MCP_AVAILABLE:
+        raise HTTPException(404, "本部署形态不含 MCP 模块(现场便携包)")
+    with _conn() as conn:
+        ok = mcp_server.revoke_token(conn, token_id, actor)
+    if not ok:
+        raise HTTPException(404, "token 不存在或已吊销")
+    return {"revoked": token_id}
+
+
+# MCP 服务端点(注册先于 SPA 兜底;鉴权/限频/审计在网关层)。
+# 显式 api_route 转发而非 mount:mount 的 path 剥前缀会把请求导去不存在的
+# 子路由(405),直接透传 scope 最干净。
+# 教训(2026-08-13):SDK 的 StreamableHTTPSessionManager.run() 每实例只能
+# 调一次,且任务组绑定事件循环——子 app/管理器必须**随每次 startup 新建**
+# (测试多 TestClient 轮转时各自独立),不能 import 时建一次。
+_MCP_GATEWAY = None
+_MCP_SESSION_CM = None
+
+if _MCP_AVAILABLE:
+
+    @app.on_event("startup")
+    async def _mcp_session_start():
+        global _MCP_GATEWAY, _MCP_SESSION_CM
+        sub, mgr = mcp_server.build_mcp_app()
+        _MCP_GATEWAY = mcp_server.MCPGateway(sub)
+        _MCP_SESSION_CM = mgr.run()
+        await _MCP_SESSION_CM.__aenter__()
+
+    @app.on_event("shutdown")
+    async def _mcp_session_stop():
+        global _MCP_GATEWAY, _MCP_SESSION_CM
+        if _MCP_SESSION_CM is not None:
+            await _MCP_SESSION_CM.__aexit__(None, None, None)
+        _MCP_SESSION_CM = None
+        _MCP_GATEWAY = None
+
+    @app.api_route("/mcp", methods=["GET", "POST", "DELETE"])
+    async def mcp_endpoint(request: Request):
+        if _MCP_GATEWAY is None:           # 未 startup(不应发生)如实 503
+            raise HTTPException(503, "MCP 服务未初始化")
+        await _MCP_GATEWAY(request.scope, request.receive, request._send)
 
 
 # ---- 前端静态托管(M0 单端口形态:dist 存在即挂载;API 路由注册在前优先) ----
