@@ -254,7 +254,11 @@ def parse_source(conn: sqlite3.Connection, source_id: str,
         workers = _par.workers_from_env()
     # 描述文件可声明源编码(GBK 业务日志);内置格式无该属性 → utf-8
     enc = getattr(mod, "encoding", None) or "utf-8"
-    if workers > 1:
+    # 二进制格式(BINARY=True,如 evtx)走 parse_file 文件通道;
+    # 二进制容器非逐行无状态,永不进并行(line_safe 拿不准一律 False,
+    # 这里再显性闸一道,双保险)
+    binary = bool(getattr(mod, "BINARY", False))
+    if workers > 1 and not binary:
         from . import parallel as _par
         try:
             size = path.stat().st_size
@@ -269,8 +273,16 @@ def parse_source(conn: sqlite3.Connection, source_id: str,
     dconn = duck.get_conn()
     duck.delete_source(dconn, source_id)  # 重解析幂等
 
+    def _outcomes():
+        # BINARY 走文件通道(parse_file),文本走行通道(parse);锚点语义
+        # 一致:line_no 恒为「第 N 条」(物理行号 / 记录号)
+        if binary:
+            yield from mod.parse_file(path)
+        else:
+            yield from mod.parse(_iter_lines(path, enc))
+
     def _event_rows():
-        for o in mod.parse(_iter_lines(path, enc)):
+        for o in _outcomes():
             report.total_lines += 1
             if o.kind == "skip":
                 report.skipped_lines += 1
@@ -279,7 +291,8 @@ def parse_source(conn: sqlite3.Connection, source_id: str,
                 report.note_bad(o)
                 continue
             report.parsed += 1
-            ts_utc = normalize.to_utc(o.dt_local, row["tz_declared"])
+            ts_utc = normalize.resolve_ts_utc(o.dt_local, row["tz_declared"],
+                                              o.ts_utc)
             norm_json = json.dumps(o.norm, ensure_ascii=False)
             yield (_new_id(), source_id, o.line_no, o.ts_raw, ts_utc,
                    norm_json, o.raw, row["sha256"])
@@ -287,14 +300,21 @@ def parse_source(conn: sqlite3.Connection, source_id: str,
     def _entity_rows():
         # 第二趟流式重扫(文件在金库,IO 便宜):事件与实体分两趟走,
         # 换取内存恒定——事件流式 COPY 入库,实体不攒全量。
-        for o in mod.parse(_iter_lines(path, enc)):
+        for o in _outcomes():
             if o.kind != "event":
                 continue
-            ts_utc = normalize.to_utc(o.dt_local, row["tz_declared"])
+            ts_utc = normalize.resolve_ts_utc(o.dt_local, row["tz_declared"],
+                                              o.ts_utc)
             yield from _extract_entities(source_id, o.line_no, ts_utc, o.norm)
 
     # 非空文件 0 行命中 → 报错不猜(此时还没有任何事件插入,无需回滚)
-    n_events = duck.insert_events(dconn, _event_rows())
+    # ParseError(如 evtx 容器损坏/0 记录):解析器明确拒绝,清掉半成品
+    # 派生行后置 failed(零静默,残块不猜)
+    try:
+        n_events = duck.insert_events(dconn, _event_rows())
+    except formats.ParseError as e:
+        duck.delete_source(dconn, source_id)
+        return _fail(str(e))
     data_lines = report.parsed + report.bad_lines
     if data_lines > 0 and report.parsed == 0:
         return _fail(f"非空文件 {data_lines} 行数据 0 行命中"

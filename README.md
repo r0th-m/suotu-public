@@ -146,6 +146,60 @@ Moonshot/Ollama 本地/自定义 OpenAI 兼容端点），在线厂商保存时�
 ⑧ 收工 → 封存案件(zip 在 data/exports/,可离线校验)
 ```
 
+## 图文教程（首次使用逐步截图）
+
+以下截图来自一次完整的演示案件（仓库根目录的 `demo-access.log` 就是这份合成样本：正常流量 + 路径穿越 + sqlmap 扫描器 UA，可直接上传复现），跟着点一遍即可上手。
+
+**1. 首次启动 → 「首次使用？初始化管理员账号」**——初始化只在无用户时开放，口令至少 8 位。
+
+![登录页](docs/images/tutorial/01-login.png)
+
+**2. 填写管理员账号与两遍口令 → 初始化管理员 → 回到登录页登录。**
+
+![初始化管理员](docs/images/tutorial/02-setup.png)
+
+**3. 登录后是案件列表页。一次应急建一个案件；不同事件的日志分开建案，别混。**
+
+![案件列表](docs/images/tutorial/03-home.png)
+
+**4. 左侧「+ 新建案件」→ 填案件名称（建议带上事件与日期）→ 创建。**
+
+![新建案件](docs/images/tutorial/04-new-case.png)
+
+**5. 进入案件，默认落在「日志源」tab：封存导出在最上方，往下是上传区。**
+
+![案件主页](docs/images/tutorial/05-case-home.png)
+
+**6. 「选择文件」上传 txt/log/zip（可填系统名与来源说明留痕）→ 上传并探测格式。系统给出指纹建议（格式 + 置信度 + 抽样解析预览）——**建议只是建议**，填好声明时区（如 `Asia/Shanghai`），由人点「确认解析配置」才生效。**
+
+![指纹建议](docs/images/tutorial/06-fingerprint.png)
+
+**7. 确认后在下方源列表点「开始解析」→ 状态变为「已解析」，行数与时间范围如实展示；「解析报告」可展开看每行成败。**
+
+![解析完成](docs/images/tutorial/07-parsed.png)
+
+**8. 「规则与扫描」tab → 运行扫描：签名 + 统计 + 跨源联动三段一次跑完，产物全部是**候选命中**，自动进待审区，机器不定论。**
+
+![规则扫描](docs/images/tutorial/08-rules.png)
+
+**9. 「待审区」tab 逐条裁决：接受为线索 / 排除 / 互证跳转——一切入库从这里过，判断权归人。**
+
+![待审区](docs/images/tutorial/09-review.png)
+
+**10. 「检索」tab：全文词 + 字段条件（IP/UA/方法/状态码等，精确或包含）+ 时间窗；结果行可展开归一字段，行号直达原文。**
+
+![检索](docs/images/tutorial/10-search.png)
+
+**11. 「查看」tab：金库原文直读（读前 SHA256 校验），行号锚点与检索/待审区联动。**
+
+![查看原文](docs/images/tutorial/11-viewer.png)
+
+**12. 「AI 分析」tab：选已解析源 + token 预算 → 播种并精读（L2+L3）。注意必须先有 pending 命中当锚点——**无锚点不播种是设计，不是 bug**。AI 产物一律以 pending 回待审区，仍由人裁决。**
+
+![AI 分析](docs/images/tutorial/12-ai.png)
+
+收工时回「日志源」tab 顶部 → 封存案件，zip 落在 `data/exports/`，可离线校验。
+
 ## MCP 接入（Cherry Studio / Trae 等客户端直驾）
 
 三步接入:

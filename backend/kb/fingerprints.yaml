@@ -20,3 +20,11 @@ formats:
     header_patterns:
       - '^#Software:'
       - '^#Fields:'
+  # evtx 是二进制容器:行特征无意义,靠「ElfFile\x00」魔数(首行经
+  # utf-8 replace 解码后仍在样本头部);置信度=真实解析器走文件通道
+  # 试解析命中率(fingerprint._trial_parse_binary)
+  - format_id: evtx
+    name: Windows evtx 事件日志(二进制)
+    line_patterns: []
+    header_patterns:
+      - "^ElfFile\\x00"

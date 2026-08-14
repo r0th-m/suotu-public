@@ -199,6 +199,60 @@ on the host-forensics side (read-only; never writes back).
 ⑧ Wrap up → seal the case (zip in data/exports/, verifiable offline)
 ```
 
+## Illustrated walkthrough (first-run, step by step)
+
+Screenshots below come from one complete demo case (the synthetic sample ships in the repo root as `demo-access.log`: normal traffic + path traversal + sqlmap scanner UA — upload it to reproduce). The UI is Chinese; the flow maps 1:1 onto the steps above.
+
+**1. First launch → "首次使用?初始化管理员账号" (initialize admin)** — setup is only open while no user exists; passwords must be at least 8 chars.
+
+![Login](docs/images/tutorial/01-login.png)
+
+**2. Fill in admin name + password twice → 初始化管理员 → log in.**
+
+![Setup](docs/images/tutorial/02-setup.png)
+
+**3. The case list. One incident = one case; never mix incidents.**
+
+![Cases](docs/images/tutorial/03-home.png)
+
+**4. "+ 新建案件" (new case) → name it (incident + date recommended) → 创建.**
+
+![New case](docs/images/tutorial/04-new-case.png)
+
+**5. Case home lands on the Sources tab: seal/export on top, upload below.**
+
+![Case home](docs/images/tutorial/05-case-home.png)
+
+**6. Choose a txt/log/zip file → 上传并探测格式 (upload & fingerprint). The fingerprint is a **suggestion** (format + confidence + sample parse preview); fill the declared timezone (e.g. `Asia/Shanghai`) and click 确认解析配置 — nothing parses without human approval.**
+
+![Fingerprint](docs/images/tutorial/06-fingerprint.png)
+
+**7. Click 开始解析 (parse) in the source list → status 已解析; the parse report shows per-line success/failure.**
+
+![Parsed](docs/images/tutorial/07-parsed.png)
+
+**8. Rules & Scan tab → 运行扫描: signatures + statistics + cross-source correlation in one pass. All output is **candidate hits**, routed to the review queue — the machine never concludes.**
+
+![Rules scan](docs/images/tutorial/08-rules.png)
+
+**9. Review tab (待审区): accept as clue / dismiss / cross-check — everything enters the store through human ruling.**
+
+![Review](docs/images/tutorial/09-review.png)
+
+**10. Search tab: free text + field filters (IP/UA/method/status, exact or contains) + time window; line numbers jump to the original.**
+
+![Search](docs/images/tutorial/10-search.png)
+
+**11. View tab: vault原文 with SHA256 re-check on read and line anchors.**
+
+![Viewer](docs/images/tutorial/11-viewer.png)
+
+**12. AI Analysis tab: pick a parsed source + token budget → 播种并精读 (seed & close-read, L2+L3). Pending hits are required as anchors — no seeding without anchors is by design. AI findings return to the review queue as pending.**
+
+![AI analysis](docs/images/tutorial/12-ai.png)
+
+To wrap up, return to the Sources tab → 封存案件 (seal); the zip lands in `data/exports/` and verifies offline.
+
 ## MCP integration (drive SuoTu from Cherry Studio / Trae)
 
 Three steps:

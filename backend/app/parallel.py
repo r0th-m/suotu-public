@@ -149,7 +149,7 @@ def parse_chunk_task(task: dict) -> dict:
                         f"L{o.line_no}: {o.reason or '不匹配'}")
                 continue
             res["parsed"] += 1
-            ts_utc = normalize.to_utc(o.dt_local, tz)
+            ts_utc = normalize.resolve_ts_utc(o.dt_local, tz, o.ts_utc)
             writers["events"].write_rows([(
                 uuid.uuid4().hex, task["source_id"], o.line_no,
                 o.ts_raw, ts_utc, json.dumps(o.norm, ensure_ascii=False),

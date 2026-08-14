@@ -63,7 +63,7 @@ def _auth_guard(request: Request) -> None:
         request.state.username = auth.require_user(request)
 
 
-APP_VERSION = "v1.1.0"  # 2026-08-13(MCP 服务端/外发双闸/并行化)
+APP_VERSION = "v1.2.0"  # 2026-08-14(evtx 原生解析/PageRank 关联强度/图文教程)
 
 app = FastAPI(title="索图", version=APP_VERSION,
               dependencies=[Depends(_auth_guard)])

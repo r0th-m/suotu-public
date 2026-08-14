@@ -484,5 +484,6 @@ def list_enabled() -> list[dict]:
             continue
         name = data.get("name") or path.stem
         out.append({"format_id": f"desc:{name}",
-                    "name": data.get("title") or name})
+                    "name": data.get("title") or name,
+                    "binary": False})     # 描述文件引擎只产文本行式,恒 False
     return out

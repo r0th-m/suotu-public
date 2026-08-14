@@ -399,6 +399,16 @@ def _execute(run_id: str, window_lines: int) -> None:
                 "anchors": [a for a in anchor_set if w_from <= a <= w_to],
                 "status": "pending", "findings": 0})
 
+        # 关联强度排序(2026-08-14,SAG 式 PageRank):窗口按锚点强度降序,
+        # 强关联先吃 token;无实体联动数据时自然回退行号序。
+        _scores = query.entity_linkage_scores(case_id, source_id)
+        if _scores:
+            for w in report["windows"]:
+                w["linkage_score"] = round(max(
+                    (_scores.get((source_id, a), 0.0) for a in w["anchors"]),
+                    default=0.0), 6)
+            report["windows"].sort(key=lambda w: -w["linkage_score"])
+
         # 确定性命中分类(三重否定口径):签名规则 id 集 / 统计+跨源 id 集
         sig_ids = {r["id"] for r in rules.load_rules()}
         stat_ids = {r["id"] for r in rules.load_stat_rules()}

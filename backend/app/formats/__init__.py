@@ -12,13 +12,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import apache_common, descriptor, iis_w3c, nginx_combined, raw_t0
+from . import apache_common, descriptor, evtx_log, iis_w3c, nginx_combined, raw_t0
 from .base import LineOutcome, ParseError, ParseReport  # noqa: F401(再导出)
 from .descriptor import FormatDescError  # noqa: F401(再导出)
 
 _MODULES = {
     m.FORMAT_ID: m
-    for m in (nginx_combined, apache_common, iis_w3c, raw_t0)
+    for m in (nginx_combined, apache_common, iis_w3c, raw_t0, evtx_log)
 }
 
 DESC_PREFIX = "desc:"
@@ -43,8 +43,13 @@ def desc_status(name: str) -> str | None:
 
 
 def list_formats() -> list[dict]:
-    """可选格式清单(人确认/手选界面用):内置 + enable 状态的描述文件。"""
-    return ([{"format_id": m.FORMAT_ID, "name": m.NAME}
+    """可选格式清单(人确认/手选界面用):内置 + enable 状态的描述文件。
+
+    binary 标记如实带出(2026-08-14 evtx 首开二进制通道):True = 走
+    parse_file 文件通道,确认界面上传后不可用文本预览逻辑猜内容。
+    """
+    return ([{"format_id": m.FORMAT_ID, "name": m.NAME,
+              "binary": bool(getattr(m, "BINARY", False))}
              for m in _MODULES.values()]
             + descriptor.list_enabled())
 

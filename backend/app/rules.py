@@ -621,6 +621,9 @@ def _run_cross_source(case_id: str, source_ids: list[str],
     by_key: dict[str, list[dict]] = {}
     for r in rows:
         by_key.setdefault(r["canonical_key"], []).append(r)
+    # 关联强度(SAG 式 PageRank,2026-08-14):同一批命中里强关联浮顶;
+    # 分数只是排序依据,写进 detail 供人看,不参与判定
+    _scores = query.entity_linkage_scores(case_id)
     hits: list[dict] = []
     for key, occ in by_key.items():
         sources = sorted({o["source_id"] for o in occ})
@@ -645,8 +648,12 @@ def _run_cross_source(case_id: str, source_ids: list[str],
                     "sources": [{"source_id": s,
                                  "name": src_names.get(s, s)} for s in sources],
                     "rep_line_no": o["first_line"],
+                    "linkage_score": round(
+                        _scores.get((o["source_id"], o["first_line"]), 0.0), 6),
                 },
             })
+    # 强关联浮顶(同分按行号,确定性)
+    hits.sort(key=lambda h: (-h["detail"]["linkage_score"], h["line_no"]))
     return hits
 
 

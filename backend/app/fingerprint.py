@@ -26,23 +26,63 @@ def _load_kb() -> list[dict]:
     return doc.get("formats") or []
 
 
-def _read_sample(path: Path, sample_lines: int) -> list[str]:
-    """抽样前 sample_lines 个非空行(utf-8,坏字节 replace 不炸)。"""
+def _read_sample(path: Path, sample_lines: int,
+                 max_bytes: int = 512 * 1024) -> list[str]:
+    """抽样前 sample_lines 个非空行(utf-8,坏字节 replace 不炸)。
+
+    max_bytes 总量护栏(2026-08-14 evtx 接入):二进制文件可能整段无换行,
+    不限量会把整个文件当「一行」读进内存;抽样只需头部,截断不影响
+    文本格式判定(头行探测/试解析本来就只看前 N 行)。
+    """
     out: list[str] = []
-    with path.open("r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if line.strip():
-                out.append(line.rstrip("\r\n"))
-                if len(out) >= sample_lines:
-                    break
+    with path.open("rb") as f:
+        head = f.read(max_bytes)
+    for line in head.decode("utf-8", errors="replace").splitlines():
+        if line.strip():
+            out.append(line.rstrip("\r\n"))
+            if len(out) >= sample_lines:
+                break
     return out
 
 
-def _trial_parse(format_id: str, sample: list[str]) -> tuple[float, list[dict]]:
+def _trial_parse_binary(mod, path: Path,
+                        cap: int = 200) -> tuple[float, list[dict]]:
+    """二进制格式(BINARY=True)试解析:走 parse_file 文件通道, capped 前
+    cap 条记录算命中率(与文本同一「真实解析器试解析」哲学,不整文件扫)。
+
+    ParseError/异常 → (0.0, []):魔数对不上就是别的二进制,如实 0 不猜。
+    """
+    parsed = bad = 0
+    preview: list[dict] = []
+    try:
+        for o in mod.parse_file(path):
+            if o.kind == "event":
+                parsed += 1
+                if len(preview) < 3:
+                    preview.append({"line_no": o.line_no, "ts_raw": o.ts_raw,
+                                    "norm": o.norm})
+            elif o.kind == "bad":
+                bad += 1
+            if parsed + bad >= cap:
+                break
+    except Exception:
+        return 0.0, []
+    total = parsed + bad
+    return (parsed / total if total else 0.0), preview
+
+
+def _trial_parse(format_id: str, sample: list[str],
+                 path: Path | None = None) -> tuple[float, list[dict]]:
     """用真实解析器试解析样本,返回 (命中率, 前3行解析预览)。"""
     mod = formats.find_format(format_id)
     if mod is None:
         return 0.0, []
+    if getattr(mod, "BINARY", False):
+        # 二进制不走文本行样本;魔数初筛由 header_patterns 完成,
+        # 这里用文件通道真试解析算置信度(对得上 ElfFile 的才可能是 evtx)
+        if path is None:
+            return 0.0, []
+        return _trial_parse_binary(mod, path)
     parsed = bad = 0
     preview: list[dict] = []
     for o in mod.parse(sample):
@@ -73,7 +113,7 @@ def detect(path: Path, sample_lines: int = 50) -> dict:
             header_pats = entry.get("header_patterns") or []
             header_hit = bool(header_pats) and any(
                 re.search(p, line) for p in header_pats for line in head)
-            rate, preview = _trial_parse(fid, sample)
+            rate, preview = _trial_parse(fid, sample, path=path)
             if rate <= 0.0 and not header_hit:
                 continue
             suggestions.append({

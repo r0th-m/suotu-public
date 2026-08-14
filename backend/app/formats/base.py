@@ -7,6 +7,9 @@
   「原文物理行号(1 起)」,后续多行块以起始行号为锚,语义已留好;
 - 归一字段 web 族(mini-ECS):src_ip/method/path/query/status/bytes/ua/referer;
   映射不上的字段进 norm["extras"],不丢数据。
+- 二进制格式(2026-08-14,evtx 首开):模块声明 BINARY = True 并提供
+  parse_file(path) -> Iterator[LineOutcome],走文件通道不经文本行;
+  line_no 语义=记录号(「第 N 条记录」锚点),raw=该记录原文(如 XML)。
 """
 from __future__ import annotations
 
@@ -31,6 +34,10 @@ class LineOutcome:
     kind: str                          # event | bad | skip
     ts_raw: str | None = None
     dt_local: datetime | None = None
+    # UTC 原生格式(evtx 的 SystemTime)直通:解析器已持 UTC aware 时间,
+    # 不再走「本地时间+声明时区」换算(重复换算是错 twice,不是归一);
+    # ingest 归一优先级:ts_utc 直通 > dt_local+tz_declared > None 如实。
+    ts_utc: datetime | None = None
     norm: dict = field(default_factory=dict)
     reason: str | None = None          # bad 行的失败原因
     # M4 描述文件引擎:多行合并的续行数(0 = 单行事件);raw 含续行全文,

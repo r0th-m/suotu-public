@@ -148,9 +148,10 @@ def test_registry_lookup():
     assert formats.find_format("raw") is raw_t0
     assert formats.find_format("nonexistent") is None  # 未知 → None 不猜
     ids = {f["format_id"] for f in formats.list_formats()}
-    # desc:* 是治理资产(可被人审启用),不属于内置契约;内置四件套精确比对
+    # desc:* 是治理资产(可被人审启用),不属于内置契约;内置五件套精确比对
     builtin = {i for i in ids if not i.startswith("desc:")}
-    assert builtin == {"nginx_combined", "apache_common", "iis_w3c", "raw"}
+    assert builtin == {"nginx_combined", "apache_common", "iis_w3c", "raw",
+                       "evtx"}
 
 
 # ------------------------------------------------ nginx combined 追加 XFF 段

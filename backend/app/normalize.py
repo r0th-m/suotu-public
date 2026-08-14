@@ -70,3 +70,19 @@ def to_utc(dt_local: datetime | None, tz_declared: str | None) -> datetime | Non
     if tz is None:
         return None
     return dt_local.replace(tzinfo=tz).astimezone(timezone.utc)
+
+
+def resolve_ts_utc(dt_local: datetime | None, tz_declared: str | None,
+                   ts_utc_direct: datetime | None = None) -> datetime | None:
+    """LineOutcome 三要素 → ts_utc 的统一裁决(ingest 串/并行同一入口)。
+
+    优先级:ts_utc_direct(UTC 原生格式直通,如 evtx SystemTime)>
+    dt_local + 声明时区归一 > None 如实(时区未知不硬归一)。
+    直通值须为 aware UTC(解析器契约);naive 直通值按声明时区语义
+    会错,故这里只做 astimezone(UTC) 幂等换算,不替解析器猜时区。
+    """
+    if ts_utc_direct is not None:
+        if ts_utc_direct.tzinfo is None:
+            return None                     # 直通给 naive 是契约违规,如实不猜
+        return ts_utc_direct.astimezone(timezone.utc)
+    return to_utc(dt_local, tz_declared)

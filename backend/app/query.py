@@ -535,3 +535,72 @@ def aggregate(case_id: str, field: str, source_id: str | None = None,
         [*params, int(limit)]).fetchall()
     return {"field": field, "total_events": total, "limit": limit,
             "buckets": [{"value": r[0], "count": r[1]} for r in rows]}
+
+
+# ---------------------------------------------------------------- 关联强度(SAG 式 PageRank)
+
+def entity_linkage_scores(case_id: str, source_id: str | None = None,
+                          damping: float = 0.85, rounds: int = 20,
+                          max_entities: int = 5000,
+                          max_df: int = 200) -> dict[tuple[str, int], float]:
+    """事件关联强度评分(借 SAG/arXiv:2606.15971 的查询期超边思路,确定性版)。
+
+    事件 = 日志行((source_id, line_no));实体共享构边,边权 =
+    实体稀有度(1/df)× ln(1+频次);在事件图上跑加权 PageRank。
+    返回 {(source_id, line_no): 强度分}。
+
+    纪律与保险丝:
+    - df=1 的实体不构成联动,直接跳过;df>max_df 的热门实体(127.0.0.1
+      这类)跳过——防毛线团,稀有才有信号;
+    - 参与实体总数超 max_entities 时按稀有度(升 df)截断;
+    - 全确定性:同输入同输出,无 LLM 参与;分数只是排序依据,不是判定。
+    """
+    src_ids = _case_source_ids(case_id)
+    if source_id is not None:
+        src_ids = [source_id] if source_id in src_ids else []
+    if not src_ids:
+        return {}
+    where = "source_id IN (" + ", ".join("?" for _ in src_ids) + ")"
+    rows = duck.get_conn().execute(
+        f"SELECT canonical_key, source_id, line_no FROM entities"
+        f" WHERE {where}", src_ids).fetchall()
+    by_key: dict[str, list[tuple[str, int]]] = {}
+    for key, sid, line_no in rows:
+        by_key.setdefault(key, []).append((sid, line_no))
+
+    # 稀有度过滤 + 截断
+    cands = [(k, occ) for k, occ in by_key.items()
+             if 2 <= len(set(occ)) <= max_df]
+    cands.sort(key=lambda kv: len(set(kv[1])))          # 升 df = 最稀有优先
+    cands = cands[:max_entities]
+
+    # 事件图:W(ei→ej) += (1/df) * ln(1+freq(k, ej))
+    import math
+    out_w: dict[tuple[str, int], dict[tuple[str, int], float]] = {}
+    for _key, occ in cands:
+        uniq = sorted(set(occ))
+        df = len(uniq)
+        w = 1.0 / df
+        freq: dict[tuple[str, int], int] = {}
+        for e in occ:
+            freq[e] = freq.get(e, 0) + 1
+        for ei in uniq:
+            row = out_w.setdefault(ei, {})
+            for ej in uniq:
+                if ej != ei:
+                    row[ej] = row.get(ej, 0.0) + w * math.log1p(freq[ej])
+    nodes = sorted(out_w)
+    if not nodes:
+        return {}
+    n = len(nodes)
+    pr = {e: 1.0 / n for e in nodes}
+    for _ in range(rounds):
+        new = {e: (1.0 - damping) / n for e in nodes}
+        for ei in nodes:
+            out_sum = sum(out_w[ei].values())
+            if out_sum <= 0:
+                continue
+            for ej, w in out_w[ei].items():
+                new[ej] += damping * pr[ei] * (w / out_sum)
+        pr = new
+    return pr
