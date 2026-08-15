@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- M1:候选命中待审区(§1 判断权归人:机器产物,永不自动成线索);
 -- UNIQUE(source_id, line_no, rule_id) 去重,规则重跑幂等。
 -- M2:detail_json 存统计/联动命中的结构化细节(签名命中为 NULL)。
+-- 2026-08-15:round_no 记录该命中由第几轮扫描产出(老数据 NULL=「历史」)。
 CREATE TABLE IF NOT EXISTS hits (
   id TEXT PRIMARY KEY,
   case_id TEXT NOT NULL REFERENCES cases(id),
@@ -116,7 +117,33 @@ CREATE TABLE IF NOT EXISTS hits (
   reviewed_at TEXT,
   review_note TEXT,
   detail_json TEXT,
+  round_no INTEGER,
   UNIQUE (source_id, line_no, rule_id)
+);
+-- 扫描轮次台账(2026-08-15):每次 rules:run 记一轮,round_no 每案件递增;
+-- rule_ids_json NULL=全量扫描,否则为选中规则 id 列表;summary_json 为
+-- 报告摘要(scanned/hits_new/truncated 计数)。
+CREATE TABLE IF NOT EXISTS scan_runs (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES cases(id),
+  round_no INTEGER NOT NULL,
+  rule_ids_json TEXT,
+  actor TEXT NOT NULL,
+  summary_json TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (case_id, round_no)
+);
+-- 记录区人工笔记(2026-08-15):案件级工作记录(非证据——证据链在金库/
+-- 审计链,笔记物理删除即可);anchor 可选,存类型+引用(id 或坐标)。
+CREATE TABLE IF NOT EXISTS case_notes (
+  id TEXT PRIMARY KEY,
+  case_id TEXT NOT NULL REFERENCES cases(id),
+  body TEXT NOT NULL,
+  anchor_kind TEXT
+    CHECK (anchor_kind IN ('hit','scan_round','analysis_run','line')),
+  anchor_ref TEXT,
+  author TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 -- M1:线索(人审入库才算数);唯一写入路径 = 人 accept hit(见 rules.py)。
 CREATE TABLE IF NOT EXISTS clues (
@@ -201,10 +228,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
       SQLite 不能 ALTER 去掉 NOT NULL,老库整表重建一次;列序不变,
       INSERT SELECT * 直搬(幂等:重建后 notnull=0,不再进分支)。
     - 2026-08-09:log_sources.evidence_kind(补充证据,'log'|'supplementary')。
+    - 2026-08-15:hits.round_no(扫描轮次;老数据 NULL=「历史」)。
     """
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(hits)")}
     if "detail_json" not in cols:
         conn.execute("ALTER TABLE hits ADD COLUMN detail_json TEXT")
+    if "round_no" not in cols:
+        conn.execute("ALTER TABLE hits ADD COLUMN round_no INTEGER")
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(cases)")}
     if "sealed_at" not in cols:
         conn.execute("ALTER TABLE cases ADD COLUMN sealed_at TEXT")

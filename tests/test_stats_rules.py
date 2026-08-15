@@ -76,7 +76,7 @@ def _hits(conn, case_id, rule_id):
 
 def test_builtin_stat_rules_load():
     loaded = rules.load_stat_rules()
-    assert len(loaded) == 4
+    assert len(loaded) == 6
     assert {r["operator"] for r in loaded} == rules.STAT_OPERATORS
     ids = [r["id"] for r in loaded]
     assert len(ids) == len(set(ids))
@@ -171,7 +171,11 @@ def test_divergence_hit(conn, case_id):
     assert d["ratio"] == pytest.approx(10.0)
     assert {b["value"] for b in d["buckets"]} == {"GET", "POST"}
     assert d["rep_line_no"] == h["line_no"]           # 代表行如实标注
-    assert report["stats"]["hits_new"] == 1
+    # 合成样本 12 事件等间隔 30s(完全规律)→ 内置 periodic-beacon 同样命中,
+    # 统计段新增 = 分化 1 + 周期信标 1(如实分列,不藏)
+    assert report["stats"]["hits_new"] == 2
+    beacon = _hits(conn, case_id, "periodic-beacon")
+    assert len(beacon) == 1 and beacon[0]["detail_json"]["cv"] == 0
 
 
 def test_divergence_below_min_group_events(conn, case_id):
@@ -338,7 +342,8 @@ def test_run_report_segments(conn, case_id):
     assert {"signature", "stats", "cross_source"} <= set(report)
     stat_ids = {r["rule_id"] for r in report["stats"]["per_rule"]}
     assert stat_ids == {"method-bytes-divergence", "rare-ua-cross-ip",
-                        "ip-rate-spike", "path-size-outlier"}
+                        "ip-rate-spike", "path-size-outlier",
+                        "auth-bruteforce-success", "periodic-beacon"}
 
 
 def test_rules_api_merged(client, case_id):

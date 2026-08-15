@@ -12,6 +12,7 @@ import ViewerPane from "./components/ViewerPane.jsx";
 import RulesPane from "./components/RulesPane.jsx";
 import ReviewPane from "./components/ReviewPane.jsx";
 import AiPane from "./components/AiPane.jsx";
+import JournalPane from "./components/JournalPane.jsx";
 import ChatPane from "./components/ChatPane.jsx";
 import LogViewer from "./components/LogViewer.jsx";
 
@@ -24,7 +25,7 @@ export default function App() {
   const [cases, setCases] = useState([]);
   const [currentId, setCurrentId] = useState(null);
   const [caseDetail, setCaseDetail] = useState(null);
-  const [view, setView] = useState("sources"); // sources | formatdesc | search | viewer | rules | review | ai | chat
+  const [view, setView] = useState("sources"); // sources | formatdesc | search | viewer | rules | review | ai | journal | chat
   const [pendingCount, setPendingCount] = useState(0);
   // M3:全局 AI 档位(online / offline_lite 诚实降级),顶栏徽标 + AI 分析 tab 共用
   const [aiStatus, setAiStatus] = useState(null);
@@ -35,6 +36,11 @@ export default function App() {
   // chatInit:跳「交流区」指定会话并预填追问。
   const [searchInit, setSearchInit] = useState(null);
   const [chatInit, setChatInit] = useState(null);
+  // 记录区锚点跳转的跨 tab 状态提升(与 searchInit/chatInit 同模式):
+  // reviewInit:跳「待审区」按 hit_id 锚定单条或按轮次过滤;
+  // aiInit:跳「AI 分析」打开指定 run。
+  const [reviewInit, setReviewInit] = useState(null);
+  const [aiInit, setAiInit] = useState(null);
   const [error, setError] = useState(null);
   const [pwOpen, setPwOpen] = useState(false);
   const [aiCfgOpen, setAiCfgOpen] = useState(false); // M6:AI 设置弹窗
@@ -117,6 +123,25 @@ export default function App() {
     setView("viewer");
   }
 
+  // 记录区锚点跳转:hit→待审区锚定单条;scan_round→待审区按轮过滤;
+  // analysis_run→AI 分析打开该 run;line→查看 tab 该源该行。
+  function jumpAnchor(anchor) {
+    if (!anchor) return;
+    if (anchor.kind === "hit") {
+      setReviewInit({ hitId: anchor.ref, key: Date.now() });
+      setView("review");
+    } else if (anchor.kind === "scan_round") {
+      setReviewInit({ round: anchor.ref, key: Date.now() });
+      setView("review");
+    } else if (anchor.kind === "analysis_run") {
+      setAiInit({ runId: anchor.ref, key: Date.now() });
+      setView("ai");
+    } else if (anchor.kind === "line") {
+      const i = anchor.ref.lastIndexOf(":");
+      jumpToLine(anchor.ref.slice(0, i), Number(anchor.ref.slice(i + 1)));
+    }
+  }
+
   // M5:命中动作「跳检索」——整体重置检索条件(filters/tsFrom/tsTo)并立即检索;key 保证同条件也重触发。
   function gotoSearch(init) {
     setSearchInit({ ...init, key: Date.now() });
@@ -147,6 +172,8 @@ export default function App() {
     setViewer({ sourceId: "", offset: 0, highlight: null });
     setSearchInit(null);
     setChatInit(null);
+    setReviewInit(null);
+    setAiInit(null);
   }
 
   function resetSessionState() {
@@ -157,6 +184,8 @@ export default function App() {
     setViewer({ sourceId: "", offset: 0, highlight: null });
     setSearchInit(null);
     setChatInit(null);
+    setReviewInit(null);
+    setAiInit(null);
     setPendingCount(0);
     setError(null);
     setPwOpen(false);
@@ -330,6 +359,12 @@ export default function App() {
                   AI 分析
                 </button>
                 <button
+                  className={`tab${view === "journal" ? " active" : ""}`}
+                  onClick={() => setView("journal")}
+                >
+                  记录
+                </button>
+                <button
                   className={`tab${view === "chat" ? " active" : ""}`}
                   onClick={() => setView("chat")}
                 >
@@ -375,6 +410,8 @@ export default function App() {
                   onAdjudicated={() => fetchPending(currentId)}
                   onGotoSearch={gotoSearch}
                   onSendToChat={sendToChat}
+                  reviewInit={reviewInit}
+                  onReviewInitConsumed={() => setReviewInit(null)}
                 />
               )}
               {view === "ai" && (
@@ -386,6 +423,15 @@ export default function App() {
                     setView("review");
                   }}
                   onFindingsChanged={() => fetchPending(currentId)}
+                  aiInit={aiInit}
+                  onAiInitConsumed={() => setAiInit(null)}
+                />
+              )}
+              {view === "journal" && (
+                <JournalPane
+                  caseDetail={caseDetail}
+                  me={auth.username}
+                  onJumpAnchor={jumpAnchor}
                 />
               )}
               {view === "chat" && (

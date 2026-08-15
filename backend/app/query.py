@@ -417,6 +417,35 @@ def agg_size_outliers(case_id: str, source_id: str, key_fields: list[str],
     return out
 
 
+def agg_event_series(case_id: str, source_id: str, key_fields: list[str],
+                     value_fields: list[str] | None = None) -> list[dict]:
+    """sequence/periodicity 取数:组(键字段)内按 ts_utc 排序的事件序列。
+
+    ts_utc NULL 的事件不参与(时间未知不硬算);缺任一键字段的事件不参与
+    (如实不计,不拿 NULL 凑组)。每行出 键值/附加字段值/行号/ts_epoch,
+    判定(成链/周期阈值)在 rules.py 算子侧,本层只出序列。
+    """
+    if not _check_source(case_id, source_id):
+        return []
+    keys = [_field_expr(f) for f in key_fields]
+    vals = [_field_expr(f) for f in (value_fields or [])]
+    not_null = " AND ".join(f"{k} IS NOT NULL" for k in keys)
+    nk = len(keys)
+    cols = keys + vals + ["line_no", "epoch(ts_utc)"]
+    sql = (f"SELECT {', '.join(cols)} FROM log_events"
+           f" WHERE source_id = ? AND ts_utc IS NOT NULL AND {not_null}"
+           f" ORDER BY {', '.join(str(i + 1) for i in range(nk))},"
+           f" ts_utc, line_no")
+    rows = duck.get_conn().execute(sql, (source_id,)).fetchall()
+    return [
+        {"key": list(r[:nk]),
+         "values": {f: r[nk + i] for i, f in enumerate(value_fields or [])},
+         "line_no": r[nk + len(vals)],
+         "ts_epoch": float(r[nk + len(vals) + 1])}
+        for r in rows
+    ]
+
+
 def source_ts_coverage(case_id: str, source_id: str) -> dict:
     """源的时间覆盖:{events, with_ts};with_ts=0 → 时序类算子如实跳过。"""
     if not _check_source(case_id, source_id):

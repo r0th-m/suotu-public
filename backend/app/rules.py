@@ -20,7 +20,13 @@
 - 分化≠异常、突刺≠攻击、疑似同源聚簇是概率性弱信号——统计命中只描述
   分布事实,结论交人复核,文案严禁定论;
 - rate_spike 基线只计有事件的时间桶(空桶不补零);ts_utc 全 NULL 的源
-  时序算子如实跳过,在扫描报告 skipped 段注明;
+  时序算子(rate_spike/sequence/periodicity)如实跳过,报告 skipped 段注明;
+- sequence(链式 motif)/periodicity(周期信标)同样是弱信号:命中≠成功
+  入侵、周期≠恶意,文案写死交人复核;
+- 命中预算帽:每规则每案最多新增 max_hits 条(签名默认 500/统计默认 50,
+  YAML 可选覆盖),超出停止该规则插入,报告 per_rule 如实标 truncated;
+- 自定义规则(data/rules_custom/,治理见 rulescustom.py)只有 enable 状态
+  进扫描,与内置规则同一 schema 闸;内置规则永只读,id 冲突拒绝;
 - target 语义本期只实现 web/any:web 规则只套 log_type=web 的源,any 规则
   套全部源(raw 兜底);middleware/audit 在 schema 里合法但无对应归一字段,
   套到源上自然零命中,不额外拦;
@@ -55,11 +61,11 @@ TARGETS = {"web", "middleware", "audit", "any"}
 MATCH_FIELDS = {"path", "query", "ua", "method", "status", "raw"}
 HIT_STATUS = {"pending", "accepted", "rejected"}
 # schema 允许的顶层键(未知字段一律报错)
-RULE_KEYS = {"id", "title", "severity", "target", "match", "note"}
+RULE_KEYS = {"id", "title", "severity", "target", "match", "note", "max_hits"}
 
-# ---- M2 统计规则(键值比对算子族) ----
+# ---- M2 统计规则(键值比对算子族 + 链式/周期时序算子) ----
 STAT_OPERATORS = {"same_key_divergence", "cross_key_same_value", "rate_spike",
-                  "size_outlier"}
+                  "size_outlier", "sequence", "periodicity"}
 # 统计规则允许的顶层键(全集;各算子必填子集见 _STAT_REQUIRED)
 STAT_RULE_KEYS = {
     "id", "title", "operator", "severity", "note",
@@ -67,6 +73,9 @@ STAT_RULE_KEYS = {
     "value_field", "min_keys", "max_value_freq", "exclude_kb",
     "bucket_seconds", "zscore", "min_bucket_count",
     "deviate_ratio", "max_outliers",
+    "steps", "window_seconds", "min_first_step_count",
+    "min_events", "max_cv", "min_span_seconds",
+    "max_hits",
 }
 _STAT_REQUIRED = {
     "same_key_divergence": {"key_fields", "diverge_field", "metric",
@@ -77,7 +86,14 @@ _STAT_REQUIRED = {
                    "min_bucket_count"},
     "size_outlier": {"key_fields", "metric", "min_group_events",
                      "deviate_ratio"},
+    "sequence": {"key_fields", "steps", "window_seconds"},
+    "periodicity": {"key_fields"},
 }
+# 依赖 ts_utc 的时序算子:ts_utc 全 NULL 的源整源跳过,报告如实标注
+_TS_OPERATORS = {"rate_spike", "sequence", "periodicity"}
+# 命中预算帽默认值(每规则每案最多新增条数;规则 YAML max_hits 可覆盖)
+SIG_MAX_HITS = 500
+STAT_MAX_HITS = 50
 # 归一字段白名单(mini-ECS,§5):统计规则的键/值/分化字段必须落在其中
 NORM_FIELDS = {
     "src_ip", "method", "path", "query", "status", "bytes", "ua", "referer",
@@ -152,16 +168,21 @@ def validate_rule(doc, *, src_name: str = "<yaml>") -> dict:
             if not isinstance(v, list) or not v or \
                     not all(isinstance(x, str) and x for x in v):
                 errors.append(f"match.{k}: 须为非空子串列表(OR 语义)")
+    max_hits = _validate_number(doc["max_hits"], "max_hits", errors,
+                                integer=True, gt=0) if "max_hits" in doc else None
     if errors:
         raise RuleError(f"{src_name}: " + ";".join(errors))
 
-    return {
+    rule = {
         "id": rid, "title": doc["title"].strip(), "severity": sev,
         "target": target,
         # 子串统一预转小写(匹配大小写不敏感,加载时一次做好)
         "match": {k: [x.lower() for x in v] for k, v in match.items()},
         "note": doc.get("note"),
     }
+    if max_hits is not None:
+        rule["max_hits"] = max_hits
+    return rule
 
 
 def load_rules(directory: Path | None = None) -> list[dict]:
@@ -317,6 +338,50 @@ def validate_stat_rule(doc, *, src_name: str = "<yaml>") -> dict:
         out["max_outliers"] = _validate_number(
             doc.get("max_outliers", 3), "max_outliers", errors,
             integer=True, gt=0)
+    elif op == "sequence":
+        # 链式 motif:steps 2~3 步,每步 {field: 归一字段, in: 协议常量列表}
+        steps = doc.get("steps")
+        if not isinstance(steps, list) or not (2 <= len(steps) <= 3):
+            errors.append("steps 须为 2~3 步的列表(每步 {field, in})")
+        else:
+            norm_steps: list[dict] = []
+            for i, s in enumerate(steps):
+                if not isinstance(s, dict) or set(s) != {"field", "in"}:
+                    errors.append(f"steps[{i}] 须为 {{field, in}} 两键映射")
+                    continue
+                if s["field"] not in NORM_FIELDS:
+                    errors.append(f"steps[{i}].field 须为归一字段之一 "
+                                  f"{sorted(NORM_FIELDS)}")
+                    continue
+                vals = s["in"]
+                if not isinstance(vals, list) or not vals or \
+                        not all(isinstance(x, (str, int))
+                                and not isinstance(x, bool) for x in vals):
+                    errors.append(f"steps[{i}].in 须为非空协议常量列表"
+                                  "(状态码/方法这类,不写案件特定值)")
+                    continue
+                # 匹配大小写不敏感、数字转字符串,加载时一次归一
+                norm_steps.append({"field": s["field"],
+                                   "in": sorted({str(x).lower() for x in vals})})
+            if len(norm_steps) == len(steps):
+                out["steps"] = norm_steps
+        out["window_seconds"] = _validate_number(
+            doc.get("window_seconds"), "window_seconds", errors,
+            integer=True, gt=0)
+        out["min_first_step_count"] = _validate_number(
+            doc.get("min_first_step_count", 3), "min_first_step_count", errors,
+            integer=True, gt=0)
+    elif op == "periodicity":
+        out["min_events"] = _validate_number(
+            doc.get("min_events", 6), "min_events", errors, integer=True, gt=2)
+        out["max_cv"] = _validate_number(
+            doc.get("max_cv", 0.2), "max_cv", errors, integer=False, gt=0.0)
+        out["min_span_seconds"] = _validate_number(
+            doc.get("min_span_seconds", 300), "min_span_seconds", errors,
+            integer=True, gt=0)
+    if "max_hits" in doc:
+        out["max_hits"] = _validate_number(
+            doc["max_hits"], "max_hits", errors, integer=True, gt=0)
     if errors:
         raise RuleError(f"{src_name}: " + ";".join(errors))
     return out
@@ -603,10 +668,137 @@ def _run_size_outlier(rule: dict, case_id: str, source_id: str) -> list[dict]:
     return hits
 
 
+def _run_sequence(rule: dict, case_id: str, source_id: str) -> list[dict]:
+    """算子⑤ sequence(链式 motif):同键 A→B(→C)时间窗链。
+
+    同组(键字段)内按 ts_utc 排序:step1 命中 ≥ min_first_step_count 次
+    (防偶然闸)且最后一次 step1 之后 window_seconds 内依次出现后续步
+    → 一条命中,锚点行 = 末步命中行,证据带 step1 计数与时间窗。
+    ts_utc NULL 的事件检索层已排除(整源 NULL 由 run_rules 如实跳过)。
+    链式命中≠成功入侵(正常用户试错后登录成功同样符合),文案写死交人复核。
+    """
+    step_fields = sorted({s["field"] for s in rule["steps"]})
+    rows = query.agg_event_series(case_id, source_id, rule["key_fields"],
+                                  step_fields)
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(tuple(r["key"]), []).append(r)
+    steps = [{**s, "_set": set(s["in"])} for s in rule["steps"]]
+
+    def _match(step: dict, ev: dict) -> bool:
+        v = ev["values"].get(step["field"])
+        return v is not None and str(v).lower() in step["_set"]
+
+    window = rule["window_seconds"]
+    hits: list[dict] = []
+    for key, evs in groups.items():
+        first_idx = [i for i, ev in enumerate(evs) if _match(steps[0], ev)]
+        if len(first_idx) < rule["min_first_step_count"]:
+            continue                                # 第一步次数闸(防偶然)
+        # 链式推进:末次 step1 之后 window 内依次找后续步(同刻按行号序);
+        # 遇到超窗事件即断链(窗口从上一命中步起算)
+        chain = [first_idx[-1]]
+        for step in steps[1:]:
+            prev_ts = evs[chain[-1]]["ts_epoch"]
+            nxt = None
+            for j in range(chain[-1] + 1, len(evs)):
+                if evs[j]["ts_epoch"] - prev_ts > window:
+                    break                           # 超窗,链断
+                if _match(step, evs[j]):
+                    nxt = j
+                    break
+            if nxt is None:
+                break
+            chain.append(nxt)
+        if len(chain) != len(steps):
+            continue                                # 链不完整,不命中
+        anchor = evs[chain[-1]]
+        group = dict(zip(rule["key_fields"], key))
+        first_last = evs[first_idx[-1]]
+        chain_desc = " → ".join(
+            f"{s['field']} in [{','.join(s['in'])}]" for s in rule["steps"])
+        hits.append({
+            "line_no": anchor["line_no"],
+            "matched_field": ",".join(rule["key_fields"]),
+            "matched_value": _key_str(rule["key_fields"], key)[:_SNIPPET_MAX],
+            "snippet": (f"链式命中≠成功入侵,交人复核:键 "
+                        f"{_key_str(rule['key_fields'], key)} 出现 "
+                        f"{chain_desc} 链(第一步 ×{len(first_idx)},"
+                        f"窗口 {window}s);line_no 为末步命中行"),
+            "ts_utc": _iso(anchor["ts_epoch"]),
+            "detail": {
+                "kind": "sequence", "group": group,
+                "steps": [{"field": s["field"], "in": s["in"]}
+                          for s in rule["steps"]],
+                "first_step_count": len(first_idx),
+                "window_seconds": window,
+                "first_step_last_ts": _iso(first_last["ts_epoch"]),
+                "final_ts": _iso(anchor["ts_epoch"]),
+                "chain_line_nos": [evs[j]["line_no"] for j in chain],
+                "rep_line_no": anchor["line_no"],
+            },
+        })
+    return hits
+
+
+def _run_periodicity(rule: dict, case_id: str, source_id: str) -> list[dict]:
+    """算子⑥ periodicity(周期信标):同键低慢规律间隔(C2 beacon 特征)。
+
+    同组按 ts_utc 排序算相邻间隔:事件数 ≥ min_events 且 首尾跨度 ≥
+    min_span_seconds(防短簇误判)且 间隔变异系数 cv ≤ max_cv → 一条命中,
+    锚点 = 组内首行,证据带间隔均值/cv/次数。
+    周期≠恶意:心跳/健康检查/监控轮询同样周期——弱信号进待审区交人复核。
+    """
+    rows = query.agg_event_series(case_id, source_id, rule["key_fields"])
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        groups.setdefault(tuple(r["key"]), []).append(r)
+    hits: list[dict] = []
+    for key, evs in groups.items():
+        if len(evs) < rule["min_events"]:
+            continue                                # 小样本噪声闸
+        ts = [ev["ts_epoch"] for ev in evs]
+        span = ts[-1] - ts[0]
+        if span < rule["min_span_seconds"]:
+            continue                                # 跨度闸:短簇不算信标
+        intervals = [b - a for a, b in zip(ts, ts[1:])]
+        mean = sum(intervals) / len(intervals)
+        if mean <= 0:
+            continue                                # 全同刻(跨度闸已拦,双保险)
+        std = math.sqrt(sum((i - mean) ** 2 for i in intervals)
+                        / len(intervals))
+        cv = std / mean
+        if cv > rule["max_cv"]:
+            continue                                # 不够规律,不命中
+        group = dict(zip(rule["key_fields"], key))
+        hits.append({
+            "line_no": evs[0]["line_no"],
+            "matched_field": ",".join(rule["key_fields"]),
+            "matched_value": _key_str(rule["key_fields"], key)[:_SNIPPET_MAX],
+            "snippet": (f"周期≠恶意,交人复核(心跳/监控同样周期):键 "
+                        f"{_key_str(rule['key_fields'], key)} {len(evs)} 次,"
+                        f"间隔均值 {mean:.0f}s cv={cv:.3f}(阈值 "
+                        f"{rule['max_cv']}),跨度 {span:.0f}s;"
+                        f"line_no 为组内首行"),
+            "ts_utc": _iso(ts[0]),
+            "detail": {
+                "kind": "periodicity", "group": group,
+                "events": len(evs), "span_seconds": round(span, 3),
+                "interval_mean": round(mean, 3), "cv": round(cv, 4),
+                "max_cv": rule["max_cv"],
+                "min_span_seconds": rule["min_span_seconds"],
+                "rep_line_no": evs[0]["line_no"],
+            },
+        })
+    return hits
+
+
 _STAT_RUNNERS = {"same_key_divergence": _run_divergence,
                  "cross_key_same_value": _run_cluster,
                  "rate_spike": _run_rate_spike,
-                 "size_outlier": _run_size_outlier}
+                 "size_outlier": _run_size_outlier,
+                 "sequence": _run_sequence,
+                 "periodicity": _run_periodicity}
 
 
 def _run_cross_source(case_id: str, source_ids: list[str],
@@ -660,7 +852,8 @@ def _run_cross_source(case_id: str, source_ids: list[str],
 # ==================== 扫描:签名逐事件 + 统计聚合 + 跨源联动 ====================
 
 def run_rules(conn: sqlite3.Connection, case_id: str,
-              source_id: str | None = None, actor: str = "system") -> dict:
+              source_id: str | None = None, actor: str = "system",
+              rule_ids: list[str] | None = None) -> dict:
     """对案件(或指定源)全量扫描,命中写 hits 待审区(重跑幂等)。
 
     三阶段:①签名逐事件扫描(经 query.scan_events)②统计算子聚合
@@ -668,12 +861,66 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
     返回 {scanned, hits_new, hits_total, per_rule, signature, stats,
     cross_source};顶层 scanned/hits_new/hits_total/per_rule 保持 M1 语义
     (签名段),分段报告在 signature/stats/cross_source 三段。
+
+    rule_ids:可选子集扫描(签名+统计+自定义 enable+跨源内置的统一 id
+    空间);None=全量(旧行为)。未知 id / 选中未启用(draft/review)的
+    自定义规则 → 422 如实报错,一条不跑。
+    轮次:每次运行记 scan_runs 一行(round_no 每案件递增),命中带
+    round_no;老数据 round_no NULL=「历史」。
     """
     if conn.execute("SELECT 1 FROM cases WHERE id = ?", (case_id,)).fetchone() is None:
         raise RuleError(f"案件不存在: {case_id}", status=404)
     t0 = time.monotonic()
     rules = load_rules()
     stat_rules = load_stat_rules()      # 含排除 KB 加载校验,坏 KB 在此暴露
+    # 自定义规则(data/rules_custom/):只有 enable 进扫描,draft/review 不进;
+    # 与内置规则同一 schema 闸(rulescustom.load_enabled 内已校验)
+    from . import rulescustom
+    custom_sig, custom_stat = rulescustom.load_enabled()
+    rules = rules + custom_sig
+    stat_rules = stat_rules + custom_stat
+
+    # ---- 子集选择:统一 id 空间校验,非法选择一条不跑(422 如实) ----
+    run_cross_source = True
+    if rule_ids is not None:
+        selected = set(rule_ids)
+        runnable = ({r["id"] for r in rules} | {r["id"] for r in stat_rules}
+                    | {CROSS_SOURCE_RULE["id"]})
+        # draft/review 的自定义规则:id 存在但不在可跑空间,单独如实报
+        not_enabled = {c["id"] for c in rulescustom.list_custom()
+                       if c.get("status") in ("draft", "review")}
+        unknown = sorted(selected - runnable - not_enabled)
+        if unknown:
+            raise RuleError(f"未知规则 id: {unknown}"
+                            "(可选空间=签名+统计+enable 自定义+跨源内置)",
+                            status=422)
+        blocked = sorted(selected & not_enabled)
+        if blocked:
+            raise RuleError(f"选中的自定义规则未启用(draft/review): {blocked};"
+                            "转 enable 后才进扫描", status=422)
+        rules = [r for r in rules if r["id"] in selected]
+        stat_rules = [r for r in stat_rules if r["id"] in selected]
+        run_cross_source = CROSS_SOURCE_RULE["id"] in selected
+
+    # ---- 轮次登记:每案件递增 round_no;摘要在扫描结束后回填 ----
+    round_no = conn.execute(
+        "SELECT COALESCE(MAX(round_no), 0) + 1 AS n FROM scan_runs"
+        " WHERE case_id = ?", (case_id,)).fetchone()["n"]
+    with conn:
+        conn.execute(
+            "INSERT INTO scan_runs (id, case_id, round_no, rule_ids_json,"
+            " actor, summary_json, created_at) VALUES (?,?,?,?,?,?,?)",
+            (uuid.uuid4().hex, case_id, round_no,
+             json.dumps(sorted(rule_ids), ensure_ascii=False)
+             if rule_ids is not None else None,
+             actor, None, _now()))
+
+    # 命中预算帽:每规则每案最多新增 max_hits 条(YAML 可选,默认签名 500/
+    # 统计 50);超出停止该规则插入,truncated 如实记溢出条数
+    sig_caps = {r["id"]: r.get("max_hits", SIG_MAX_HITS) for r in rules}
+    stat_caps = {r["id"]: r.get("max_hits", STAT_MAX_HITS) for r in stat_rules}
+    sig_truncated = dict.fromkeys(sig_caps, 0)
+    stat_truncated = dict.fromkeys(stat_caps, 0)
     # 源 → (log_type, sha256):target=web 规则只套 web 源,any 套全部
     src_rows = conn.execute(
         "SELECT id, name, log_type, sha256 FROM log_sources WHERE case_id = ?",
@@ -701,8 +948,8 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
             conn.executemany(
                 "INSERT OR IGNORE INTO hits (id, case_id, source_id, line_no,"
                 " rule_id, severity, matched_field, matched_value, snippet,"
-                " ts_utc, status, created_at, detail_json)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?)", batch)
+                " ts_utc, status, created_at, detail_json, round_no)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,'pending',?,?,?)", batch)
         batch.clear()
 
     def _count() -> int:
@@ -710,7 +957,7 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
             "SELECT COUNT(*) AS c FROM hits WHERE case_id = ?", (case_id,)
         ).fetchone()["c"]
 
-    # ---- 阶段①:签名逐事件扫描(现状语义不动) ----
+    # ---- 阶段①:签名逐事件扫描(现状语义不动 + 预算帽) ----
     for ev in query.scan_events(case_id, source_id=source_id):
         scanned += 1
         log_type = src_meta[ev["source_id"]][0]
@@ -720,10 +967,13 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
             m = match_rule(rule, ev["norm"], ev["raw"])
             if m is None:
                 continue
+            if per_rule[rule["id"]] >= sig_caps[rule["id"]]:
+                sig_truncated[rule["id"]] += 1    # 超帽:停止插入,如实记溢出
+                continue
             batch.append((uuid.uuid4().hex, case_id, ev["source_id"],
                           ev["line_no"], rule["id"], rule["severity"],
                           m[0], m[1], ev["raw"][:_SNIPPET_MAX], ev["ts_utc"],
-                          _now(), None))
+                          _now(), None, round_no))
             per_rule[rule["id"]] += 1
             if len(batch) >= 500:
                 _flush()
@@ -736,7 +986,7 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
     stat_before = _count()
     for sid in scope_ids:
         for rule in stat_rules:
-            if rule["operator"] == "rate_spike":
+            if rule["operator"] in _TS_OPERATORS:
                 cov = query.source_ts_coverage(case_id, sid)
                 if cov["with_ts"] == 0:
                     # 时间未知不硬算,如实跳过并在报告注明
@@ -746,11 +996,15 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
                                   "时序算子跳过,不硬算"})
                     continue
             for h in _STAT_RUNNERS[rule["operator"]](rule, case_id, sid):
+                if stat_per_rule[rule["id"]] >= stat_caps[rule["id"]]:
+                    stat_truncated[rule["id"]] += 1    # 超帽:停止插入,记溢出
+                    continue
                 batch.append((uuid.uuid4().hex, case_id, sid, h["line_no"],
                               rule["id"], rule["severity"], h["matched_field"],
                               h["matched_value"], h["snippet"], h["ts_utc"],
                               _now(), json.dumps(h["detail"],
-                                                 ensure_ascii=False)))
+                                                 ensure_ascii=False),
+                              round_no))
                 stat_per_rule[rule["id"]] += 1
                 if len(batch) >= 500:
                     _flush()
@@ -758,34 +1012,41 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
     stat_new = _count() - stat_before
 
     # ---- 阶段③:跨源联动(global 实体 ≥2 源;host_scoped 永不跨源) ----
+    # 子集扫描时仅当选中 cross-source-entity 才跑(统一 id 空间的一员)
     cs_before = _count()
-    cs_hits = _run_cross_source(case_id, scope_ids, src_names)
+    cs_hits = _run_cross_source(case_id, scope_ids, src_names) \
+        if run_cross_source else []
     for h in cs_hits:
         batch.append((uuid.uuid4().hex, case_id, h["source_id"], h["line_no"],
                       h["rule_id"], h["severity"], h["matched_field"],
                       h["matched_value"], h["snippet"], h["ts_utc"],
-                      _now(), json.dumps(h["detail"], ensure_ascii=False)))
+                      _now(), json.dumps(h["detail"], ensure_ascii=False),
+                      round_no))
         if len(batch) >= 500:
             _flush()
     _flush()
     cs_new = _count() - cs_before
 
-    # per_rule 记「本次命中数(含重复)」;hits_new 为去重后实际新增,两值分列如实
+    # per_rule 记「本次命中数(含重复)」;hits_new 为去重后实际新增,两值分列如实;
+    # truncated 记预算帽溢出条数(0 也带,前端「已截断」标注直接读)
     hits_total = _count()
     hits_new = hits_total - hits_before
+
+    def _per_rule_rows(counts: dict, truncs: dict) -> list[dict]:
+        return [{"rule_id": rid, "hits": n, "truncated": truncs.get(rid, 0)}
+                for rid, n in counts.items()]
+
     report = {
         "scanned": scanned, "hits_new": hits_new, "hits_total": hits_total,
-        "per_rule": [{"rule_id": rid, "hits": n}
-                     for rid, n in per_rule.items()],
+        "round_no": round_no,
+        "per_rule": _per_rule_rows(per_rule, sig_truncated),
         "signature": {
             "scanned": scanned, "hits_new": sig_new,
-            "per_rule": [{"rule_id": rid, "hits": n}
-                         for rid, n in per_rule.items()],
+            "per_rule": _per_rule_rows(per_rule, sig_truncated),
         },
         "stats": {
             "hits_new": stat_new,
-            "per_rule": [{"rule_id": rid, "hits": n}
-                         for rid, n in stat_per_rule.items()],
+            "per_rule": _per_rule_rows(stat_per_rule, stat_truncated),
             "skipped": skipped,
         },
         "cross_source": {
@@ -793,13 +1054,30 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
             "entities": sorted({h["matched_value"] for h in cs_hits}),
         },
     }
+    truncated_total = sum(sig_truncated.values()) + sum(stat_truncated.values())
     with conn:
+        # 轮次摘要回填(scanned/hits_new/truncated 计数,如实)
+        conn.execute(
+            "UPDATE scan_runs SET summary_json = ?"
+            " WHERE case_id = ? AND round_no = ?",
+            (json.dumps({"scanned": scanned, "hits_new": hits_new,
+                         "hits_total": hits_total,
+                         "truncated": truncated_total,
+                         "rule_ids": sorted(rule_ids)
+                         if rule_ids is not None else None},
+                        ensure_ascii=False), case_id, round_no))
         db.append_audit(conn, case_id, action="rules_run", scope=source_id,
                         actor=actor,
                         detail={"scanned": scanned, "hits_new": hits_new,
                                 "hits_total": hits_total,
+                                "round_no": round_no,
+                                "rule_ids": sorted(rule_ids)
+                                if rule_ids is not None else None,
                                 "per_rule": {k: v for k, v in per_rule.items() if v},
                                 "stats": {k: v for k, v in stat_per_rule.items() if v},
+                                "truncated": {k: v for k, v in
+                                              {**sig_truncated,
+                                               **stat_truncated}.items() if v},
                                 "stats_skipped": len(skipped),
                                 "cross_source": report["cross_source"]["entities"]})
     # 运行日志摘要(规则扫描落点;分段计数与耗时,与审计并行)
@@ -815,10 +1093,19 @@ def run_rules(conn: sqlite3.Connection, case_id: str,
 
 def list_hits(conn: sqlite3.Connection, case_id: str, *,
               status: str | None = None, severity: str | None = None,
-              q: str | None = None,
+              q: str | None = None, round_no: str | None = None,
+              hit_id: str | None = None,
               limit: int = 50, offset: int = 0) -> dict:
-    """待审区检索:状态/严重级过滤 + 关键词(rule_id/命中值/摘要子串)+ 分页。"""
+    """待审区检索:状态/严重级/轮次过滤 + 关键词(rule_id/命中值/摘要子串)+ 分页。
+
+    round_no 过滤:"history"=老数据(round_no NULL,展示「历史」);
+    数字串=该轮;None=全部。每条带 round_no(NULL 如实)。
+    hit_id:精确锚定单条(记录区锚点跳转用)。
+    """
     conds, params = ["case_id = ?"], [case_id]
+    if hit_id:
+        conds.append("id = ?")
+        params.append(hit_id)
     if status:
         if status not in HIT_STATUS:
             raise RuleError(f"status 须为 {sorted(HIT_STATUS)} 之一")
@@ -829,6 +1116,14 @@ def list_hits(conn: sqlite3.Connection, case_id: str, *,
             raise RuleError(f"severity 须为 {sorted(SEVERITIES)} 之一")
         conds.append("severity = ?")
         params.append(severity)
+    if round_no:
+        if round_no == "history":
+            conds.append("round_no IS NULL")
+        elif round_no.isdigit() and int(round_no) >= 1:
+            conds.append("round_no = ?")
+            params.append(int(round_no))
+        else:
+            raise RuleError("round 须为轮次号(≥1)或 history(老数据)")
     if q:
         # 关键词:rule_id / matched_value / snippet / 源行号 四域子串 OR
         # (待审区搜索刚需,2026-08-05 用户反馈);LIKE 通配符按字面量转义
@@ -854,6 +1149,26 @@ def list_hits(conn: sqlite3.Connection, case_id: str, *,
             if item.get("detail_json") else None
         items.append(item)
     return {"total": total, "limit": limit, "offset": offset, "items": items}
+
+
+def list_scan_rounds(conn: sqlite3.Connection, case_id: str) -> dict:
+    """扫描轮次台账(待审区轮次下拉/审计追溯用;round_no 升序如实列出)。"""
+    rows = conn.execute(
+        "SELECT round_no, rule_ids_json, actor, summary_json, created_at"
+        " FROM scan_runs WHERE case_id = ? ORDER BY round_no",
+        (case_id,)).fetchall()
+    items = []
+    for r in rows:
+        items.append({
+            "round_no": r["round_no"],
+            "rule_ids": json.loads(r["rule_ids_json"])
+            if r["rule_ids_json"] else None,          # None=全量扫描
+            "actor": r["actor"],
+            "summary": json.loads(r["summary_json"])
+            if r["summary_json"] else None,
+            "created_at": r["created_at"],
+        })
+    return {"total": len(items), "items": items}
 
 
 # ==================== M2 互证:同 system 兄弟源 ±window 内同 path/同 IP ====================

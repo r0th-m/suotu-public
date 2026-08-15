@@ -30,8 +30,8 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from . import ai, analysis, auth, bridge, chat, config, db, duck, \
-    formatdesc, ingest, kb_explainer, logging_setup, logview, query, \
-    rules, seal, vault, viewer
+    formatdesc, ingest, journal, kb_explainer, logging_setup, logview, query, \
+    rules, rulescustom, seal, vault, viewer
 
 # 运行日志(移植自树庭 v1.2.0):绑定 data/logs/ 三个文件(app/error/operation);
 # 与审计哈希链严格分离,互不混入
@@ -63,7 +63,7 @@ def _auth_guard(request: Request) -> None:
         request.state.username = auth.require_user(request)
 
 
-APP_VERSION = "v1.2.0"  # 2026-08-14(evtx 原生解析/PageRank 关联强度/图文教程)
+APP_VERSION = "v1.3.0"  # 2026-08-15(链式/周期算子+自定义规则+预算帽+扫描轮次+记录区)
 
 app = FastAPI(title="索图", version=APP_VERSION,
               dependencies=[Depends(_auth_guard)])
@@ -371,48 +371,67 @@ def aggregate(case_id: str, field: str, source_id: str | None = None,
 @app.get("/cases/{case_id}/rules")
 def list_rules(case_id: str):
     """规则清单:items=签名规则(M1 契约不动,补 operator:null),
-    stats=统计规则(算子+参数)与跨源联动内置条目;加载即校验,坏规则 400。"""
+    stats=统计规则(算子+参数)与跨源联动内置条目,custom=自定义规则
+    (含 draft/review/enable 状态,如实标注);加载即校验,坏规则 400。"""
     with _conn() as conn:
         _get_case_or_404(conn, case_id)
     try:
         items = [{**r, "operator": None} for r in rules.list_rules()]
         stats = rules.list_stat_rules() + [rules.CROSS_SOURCE_RULE]
-        return {"items": items, "stats": stats}
+        return {"items": items, "stats": stats,
+                "custom": rulescustom.list_custom()}
     except rules.RuleError as e:
         raise HTTPException(e.status, str(e))
 
 
 class RulesRunIn(BaseModel):
     source_id: str | None = None
+    # 可选子集扫描(签名+统计+enable 自定义+跨源内置的统一 id 空间);
+    # 不传=全量(旧行为);未知 id/选中未启用自定义 → 422 如实
+    rule_ids: list[str] | None = None
 
 
 @app.post("/cases/{case_id}/rules:run")
 def run_rules(case_id: str, body: RulesRunIn | None = None,
               actor: str = Depends(auth.current_username)):
-    """L1 全量扫描(签名+统计+跨源,经 query 单一检索层);命中进待审区,
-    报告按 signature/stats/cross_source 分段。"""
+    """L1 全量/子集扫描(签名+统计+跨源,经 query 单一检索层);命中进待审区,
+    报告按 signature/stats/cross_source 分段并带本次 round_no。"""
     with _conn() as conn:
         _get_case_or_404(conn, case_id)
         try:
             return rules.run_rules(conn, case_id,
                                    source_id=(body.source_id if body else None),
+                                   rule_ids=(body.rule_ids if body else None),
                                    actor=actor)
         except rules.RuleError as e:
             raise HTTPException(e.status, str(e))
+
+
+@app.get("/cases/{case_id}/scan-rounds")
+def list_scan_rounds(case_id: str):
+    """扫描轮次台账(round_no/选中规则/actor/摘要),待审区轮次过滤用。"""
+    with _conn() as conn:
+        _get_case_or_404(conn, case_id)
+        return rules.list_scan_rounds(conn, case_id)
 
 
 @app.get("/cases/{case_id}/hits")
 def list_hits(case_id: str, status: str | None = None,
               severity: str | None = None,
               q: str | None = None,
+              round: str | None = None,
+              hit_id: str | None = None,
               limit: int = Query(50, ge=1, le=1000),
               offset: int = Query(0, ge=0)):
-    """候选待审区:状态/严重级过滤 + 关键词(rule_id/命中值/摘要/行号)+ 分页。"""
+    """候选待审区:状态/严重级/轮次(round=轮次号|history)过滤 +
+    关键词(rule_id/命中值/摘要/行号)+ hit_id 精确锚定 + 分页;
+    每条带 round_no(NULL=历史)。"""
     with _conn() as conn:
         _get_case_or_404(conn, case_id)
         try:
             return rules.list_hits(conn, case_id, status=status,
-                                   severity=severity, q=q,
+                                   severity=severity, q=q, round_no=round,
+                                   hit_id=hit_id,
                                    limit=limit, offset=offset)
         except rules.RuleError as e:
             raise HTTPException(e.status, str(e))
@@ -466,6 +485,108 @@ def corroborate(hit_id: str,
             return rules.corroborate_hit(conn, hit_id,
                                          window_seconds=window_seconds)
         except rules.RuleError as e:
+            raise HTTPException(e.status, str(e))
+
+
+# ------------------------------------------------------------ 自定义规则治理
+
+class CustomRuleIn(BaseModel):
+    yaml_text: str
+
+
+class CustomRuleUpdateIn(BaseModel):
+    yaml_text: str | None = None
+    status: str | None = None
+
+
+@app.post("/rules/custom", status_code=201)
+def create_custom_rule(body: CustomRuleIn,
+                       actor: str = Depends(auth.current_username)):
+    """新建自定义规则(签名/统计):schema 校验不过 422;撞内置 id 409
+    (内置永只读);创建恒 draft,转 enable 后才进扫描。"""
+    with _conn() as conn:
+        try:
+            return rulescustom.create_rule(conn, body.yaml_text, actor=actor)
+        except rules.RuleError as e:
+            raise HTTPException(e.status, str(e))
+
+
+@app.get("/rules/custom/{rule_id}")
+def get_custom_rule(rule_id: str):
+    """单个自定义规则详情(校验后视图 + 落盘 YAML 原文)。"""
+    try:
+        return rulescustom.get_rule(rule_id)
+    except rules.RuleError as e:
+        raise HTTPException(e.status, str(e))
+
+
+@app.put("/rules/custom/{rule_id}")
+def update_custom_rule(rule_id: str, body: CustomRuleUpdateIn,
+                       actor: str = Depends(auth.current_username)):
+    """更新自定义规则:内容(重过 schema 闸)和/或状态(draft/review/
+    enable 三值如实切换);规则 id 不可变。"""
+    with _conn() as conn:
+        try:
+            return rulescustom.update_rule(conn, rule_id,
+                                           yaml_text=body.yaml_text,
+                                           status=body.status, actor=actor)
+        except rules.RuleError as e:
+            raise HTTPException(e.status, str(e))
+
+
+@app.delete("/rules/custom/{rule_id}")
+def delete_custom_rule(rule_id: str,
+                       actor: str = Depends(auth.current_username)):
+    """删除:只许删自定义(内置规则只读,删内置 id → 404);留痕。"""
+    with _conn() as conn:
+        try:
+            return rulescustom.delete_rule(conn, rule_id, actor=actor)
+        except rules.RuleError as e:
+            raise HTTPException(e.status, str(e))
+
+
+# ------------------------------------------------------------ 记录区(案件日志流)
+
+class NoteIn(BaseModel):
+    body: str
+    anchor_kind: str | None = None    # hit|scan_round|analysis_run|line
+    anchor_ref: str | None = None     # hit_id / round_no / run_id / "源:行号"
+
+
+@app.get("/cases/{case_id}/journal")
+def get_journal(case_id: str,
+                limit: int = Query(50, ge=1, le=200),
+                offset: int = Query(0, ge=0)):
+    """记录区合成流:扫描轮次+AI 分析(台账读取时合成,不双写)+ 人工笔记,
+    按时间倒序合并分页;台账为空如实空流。"""
+    with _conn() as conn:
+        try:
+            return journal.journal(conn, case_id, limit=limit, offset=offset)
+        except journal.JournalError as e:
+            raise HTTPException(e.status, str(e))
+
+
+@app.post("/cases/{case_id}/notes", status_code=201)
+def add_note(case_id: str, body: NoteIn,
+             actor: str = Depends(auth.current_username)):
+    """新增人工笔记:正文非空 ≤4000 字;锚点引用对象不存在 → 422 如实。"""
+    with _conn() as conn:
+        try:
+            return journal.add_note(conn, case_id, body.body,
+                                    anchor_kind=body.anchor_kind,
+                                    anchor_ref=body.anchor_ref, actor=actor)
+        except journal.JournalError as e:
+            raise HTTPException(e.status, str(e))
+
+
+@app.delete("/notes/{note_id}")
+def delete_note(note_id: str,
+                actor: str = Depends(auth.current_username)):
+    """删除笔记:物理删(工作记录非证据);仅本人可删(无角色概念),他人 403。"""
+    with _conn() as conn:
+        try:
+            return journal.delete_note(conn, note_id, actor=actor)
+        except journal.JournalError as e:
             raise HTTPException(e.status, str(e))
 
 

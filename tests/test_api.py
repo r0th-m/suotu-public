@@ -42,7 +42,7 @@ def test_healthz(client):
     r = client.get("/healthz")
     assert r.status_code == 200
     body = r.json()
-    assert body["ok"] is True and body["version"] == "v1.1.0"
+    assert body["ok"] is True and body["version"] == "v1.3.0"
 
 
 def test_cases_crud(client):

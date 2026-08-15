@@ -60,6 +60,17 @@ human-reviewable and swappable):
 - **Cross-source entity correlation** — the same public entity appearing in ≥2
   log sources is linked automatically (private-IP/account entities structurally
   excluded to prevent misattribution)
+- **Sequence motif** — same-key A→B chain within a time window (auth-failure
+  storm followed by a success = brute-force-success chain; sources without
+  ts_utc are honestly skipped)
+- **Periodicity beacon** — same-key requests at regular intervals (coefficient
+  of variation + sample count + span gates; heartbeats are periodic too, so
+  this stays a weak signal for human review)
+
+Rule governance trio: **custom rules** (draft→review→enable lifecycle, built-ins
+read-only, schema gate on save), **budget caps** (per-rule per-case hit limit,
+overflow truncated and honestly marked), **scan rounds** (every scan is a
+numbered round; hits carry round badges and can be filtered by round).
 
 ### Format governance (the engineering answer to a thousand log formats)
 
@@ -100,6 +111,21 @@ finds things AI cannot.
 Read-only vault + SHA256 verify-before-read + line-number anchors + hash-chained
 audit + independently verifiable seal (the verifier is a pure function and works
 without the platform).
+
+### Case journal (records area)
+
+Scan rounds, AI runs and human notes merge into one timeline: automatic entries
+faithfully transcribe the ledgers, and manual notes can carry anchors that jump
+straight back to a hit / round / AI report / original line — the reasoning
+process of a case is replayable.
+
+### Native EVTX parsing & correlation-strength ranking
+
+- Upload `.evtx` (Windows Event Log) directly — no pre-conversion
+  (dual-channel: normalized fields + raw anchors);
+- Cross-source hits carry a PageRank-style linkage score (rarity × frequency,
+  fully deterministic), so AI close-reading starts from the strongest anchors
+  instead of spreading effort evenly.
 
 ### Performance
 
@@ -186,17 +212,21 @@ on the host-forensics side (read-only; never writes back).
    · Fingerprints only suggest; a human always approves parse configuration
    · No built-in format for your business log? → write a descriptor in the
      Format Governance tab, or let AI draft one
-④ Rules & Scan tab → run scan (signatures + statistics + cross-source
-   correlation in one pass)
+④ Rules & Scan tab → tick the rules to run (all selected by default) → run scan
+   · Every scan is a numbered round; hits carry round badges
+   · Custom rules: draft→enable governance, malformed YAML rejected at the gate;
+     per-rule budget caps prevent queue floods
 ⑤ Review tab → rule on each hit: accept as clue / dismiss
-   (everything enters the store through here)
+   (everything enters the store through here); filterable by round
 ⑥ Search tab → free text + field filters (IP/UA/method/status/path/XFF,
    exact or contains) + time window; click a line number to jump to the
    original line in the View tab
 ⑦ AI Analysis tab → seed & close-read (requires pending hits as anchors —
    no seeding without anchors is by design, not a bug) → read the synthesis
    in the report area; findings still land back in the review queue
-⑧ Wrap up → seal the case (zip in data/exports/, verifiable offline)
+⑧ Journal tab → scan/AI auto entries + human notes with anchors; replay the
+   case's reasoning as one stream
+⑨ Wrap up → seal the case (zip in data/exports/, verifiable offline)
 ```
 
 ## Illustrated walkthrough (first-run, step by step)
@@ -231,11 +261,11 @@ Screenshots below come from one complete demo case (the synthetic sample ships i
 
 ![Parsed](docs/images/tutorial/07-parsed.png)
 
-**8. Rules & Scan tab → 运行扫描: signatures + statistics + cross-source correlation in one pass. All output is **candidate hits**, routed to the review queue — the machine never concludes.**
+**8. Rules & Scan tab: expand the rule picker to choose what runs (all selected = full sweep; draft custom rules are greyed out) → 运行扫描. All output is **candidate hits** routed to the review queue; every scan is a numbered round ("第 N 轮").**
 
 ![Rules scan](docs/images/tutorial/08-rules.png)
 
-**9. Review tab (待审区): accept as clue / dismiss / cross-check — everything enters the store through human ruling.**
+**9. Review tab (待审区): accept as clue / dismiss / cross-check — everything enters the store through human ruling. Hits carry round badges (R1/R2…) and the queue filters by round.**
 
 ![Review](docs/images/tutorial/09-review.png)
 
@@ -250,6 +280,10 @@ Screenshots below come from one complete demo case (the synthetic sample ships i
 **12. AI Analysis tab: pick a parsed source + token budget → 播种并精读 (seed & close-read, L2+L3). Pending hits are required as anchors — no seeding without anchors is by design. AI findings return to the review queue as pending.**
 
 ![AI analysis](docs/images/tutorial/12-ai.png)
+
+**13. Journal tab (记录): the case log stream — scan rounds and AI runs become entries automatically, and human notes carry anchors that jump back to a hit / round / report / original line.**
+
+![Journal](docs/images/tutorial/13-journal.png)
 
 To wrap up, return to the Sources tab → 封存案件 (seal); the zip lands in `data/exports/` and verifies offline.
 

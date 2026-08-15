@@ -4,7 +4,7 @@ import { sevBadge, shortSha } from "../util.js";
 import HitActions from "./HitActions.jsx";
 
 // 待审区:候选命中的人工裁决(§1 判断权归人——命中只是候选,接受/排除都由人点头)+ 线索列表。
-export default function ReviewPane({ caseDetail, colorOf, onJump, onAdjudicated, onGotoSearch, onSendToChat }) {
+export default function ReviewPane({ caseDetail, colorOf, onJump, onAdjudicated, onGotoSearch, onSendToChat, reviewInit, onReviewInitConsumed }) {
   const [tab, setTab] = useState("hits");
   // 裁决后让线索列表重新拉取(未打开时不提前请求)。
   const [clueKey, setClueKey] = useState(0);
@@ -35,6 +35,8 @@ export default function ReviewPane({ caseDetail, colorOf, onJump, onAdjudicated,
           onAdjudicated={handleAdjudicated}
           onGotoSearch={onGotoSearch}
           onSendToChat={onSendToChat}
+          reviewInit={reviewInit}
+          onReviewInitConsumed={onReviewInitConsumed}
         />
       ) : (
         <CluesView caseDetail={caseDetail} colorOf={colorOf} onJump={onJump} refreshKey={clueKey} />
@@ -56,17 +58,34 @@ const STATUS_TABS = [
 
 const STATUS_LABEL = { pending: "待审", accepted: "已接受", rejected: "已排除" };
 
-function HitsView({ caseDetail, colorOf, onJump, onAdjudicated, onGotoSearch, onSendToChat }) {
+function HitsView({ caseDetail, colorOf, onJump, onAdjudicated, onGotoSearch, onSendToChat, reviewInit, onReviewInitConsumed }) {
   const sources = caseDetail.sources || [];
   const nameOf = (id) => sources.find((s) => s.id === id)?.name || id;
   const [status, setStatus] = useState("pending");
   const [severity, setSeverity] = useState("");
+  const [round, setRound] = useState("");   // 轮次过滤:""=全部 / history=历史 / 轮次号
+  const [hitId, setHitId] = useState("");   // 锚点单条过滤(记录区 hit 锚点跳入)
+  const [rounds, setRounds] = useState([]); // 扫描轮次台账(下拉选项)
   const [q, setQ] = useState("");            // 关键词(rule_id/命中值/摘要/行号)
   const [qApplied, setQApplied] = useState("");
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+
+  // 记录区锚点跳入:hit → 锚定单条(状态切「全部」);scan_round → 按轮过滤
+  useEffect(() => {
+    if (!reviewInit) return;
+    if (reviewInit.hitId) {
+      setHitId(reviewInit.hitId);
+      setStatus("all");
+      setRound("");
+    } else if (reviewInit.round) {
+      setRound(String(reviewInit.round));
+      setHitId("");
+    }
+    onReviewInitConsumed?.();
+  }, [reviewInit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const load = useCallback(
     async (off) => {
@@ -77,6 +96,8 @@ function HitsView({ caseDetail, colorOf, onJump, onAdjudicated, onGotoSearch, on
           status,
           severity: severity || undefined,
           q: qApplied || undefined,
+          round: round || undefined,
+          hitId: hitId || undefined,
           limit: PAGE_SIZE,
           offset: off,
         });
@@ -88,12 +109,24 @@ function HitsView({ caseDetail, colorOf, onJump, onAdjudicated, onGotoSearch, on
         setBusy(false);
       }
     },
-    [caseDetail.id, status, severity, qApplied]
+    [caseDetail.id, status, severity, qApplied, round, hitId]
   );
 
   useEffect(() => {
     load(0);
   }, [load]);
+
+  // 轮次台账随列表一起拉(扫描后回到待审区即新鲜;失败不打断主流程)
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listScanRounds(caseDetail.id)
+      .then((r) => !cancelled && setRounds(r.items || []))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [caseDetail.id, load]);
 
   // 裁决成功:pending 视图下即时移出列表;其他视图就地更新状态徽标。
   async function adjudicate(hit, action, note) {
@@ -136,6 +169,28 @@ function HitsView({ caseDetail, colorOf, onJump, onAdjudicated, onGotoSearch, on
             ))}
           </select>
         </label>
+        <label>
+          轮次
+          <select value={round} onChange={(e) => setRound(e.target.value)}
+                  title="按扫描轮次过滤;「历史」= 轮次台账上线前的老数据(round_no 为空)">
+            <option value="">全部</option>
+            <option value="history">历史</option>
+            {rounds.map((r) => (
+              <option key={r.round_no} value={String(r.round_no)}>
+                R{r.round_no}({r.created_at ? r.created_at.slice(0, 19) : ""})
+              </option>
+            ))}
+          </select>
+        </label>
+        {hitId && (
+          <span className="badge badge-info">
+            锚定单条
+            <button className="link-btn" style={{ marginLeft: 4 }}
+                    onClick={() => { setHitId(""); setStatus("pending"); }}>
+              清除
+            </button>
+          </span>
+        )}
         <input
           style={{ minWidth: 200 }}
           placeholder="搜索:规则/命中值/摘要/行号"
@@ -224,6 +279,14 @@ function HitCard({ hit, name, color, nameOf, colorOf, onJump, onAction, onGotoSe
       <div className="result-head">
         <span className={`badge ${sevBadge(hit.severity)}`}>{hit.severity}</span>
         <span className="mono">{hit.rule_id}</span>
+        <span
+          className="badge badge-muted"
+          title={hit.round_no != null
+            ? `第 ${hit.round_no} 轮扫描产出`
+            : "轮次台账上线前的老数据(历史)"}
+        >
+          {hit.round_no != null ? `R${hit.round_no}` : "历史"}
+        </span>
         {isCrossSource && (
           <span className="badge badge-bolt" title="跨源联动命中:同一 global 实体出现在 ≥2 个源;同值未必同人,交人复核(§7)">
             ⚡ 跨源

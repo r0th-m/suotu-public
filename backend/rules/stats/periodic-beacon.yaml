@@ -1,0 +1,14 @@
+# 周期信标:同 src_ip+path 的低慢规律间隔请求(C2 beacon 通用特征;
+# 只写结构参数,不含任何案件特定值)
+id: periodic-beacon
+title: 周期信标(规律间隔请求)
+operator: periodicity
+severity: medium
+key_fields: [src_ip, path]
+min_events: 6                  # 组内至少 6 次(小样本噪声闸)
+max_cv: 0.2                    # 相邻间隔变异系数上限(越小越规律)
+min_span_seconds: 300          # 首尾跨度下限(防短簇误判成信标)
+note: >-
+  依据:低慢 C2 beacon 呈规律到达间隔。周期≠恶意——心跳/健康检查/监控
+  轮询同样是周期信号,本规则是弱信号,命中只进待审区交人复核;
+  ts_utc 全 NULL 的源如实跳过(时间未知不硬猜)。

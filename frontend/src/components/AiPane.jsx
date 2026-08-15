@@ -4,7 +4,7 @@ import { api } from "../api.js";
 // AI 分析区(M3):L2 播种 + L3 精读的发起、运行监控、报告与历史,外加 KB 解释小工具。
 // 文案纪律(§1/§6):AI 产物=候选(推测·待核),一律进待审区,判断权归人;
 // AI 可关——offline_lite 时诚实降级为「仅确定性播种」,界面如实标明。
-export default function AiPane({ caseDetail, aiStatus, onGotoReview, onFindingsChanged }) {
+export default function AiPane({ caseDetail, aiStatus, onGotoReview, onFindingsChanged, aiInit, onAiInitConsumed }) {
   const sources = caseDetail.sources || [];
   const parsedSources = sources.filter((s) => s.status === "parsed");
   const nameOf = (id) => sources.find((s) => s.id === id)?.name || id;
@@ -105,6 +105,13 @@ export default function AiPane({ caseDetail, aiStatus, onGotoReview, onFindingsC
     }
   }
 
+  // 记录区锚点跳入:打开指定 run(失败如实报错,不静默)
+  useEffect(() => {
+    if (!aiInit) return;
+    openRun(aiInit.runId);
+    onAiInitConsumed?.();
+  }, [aiInit]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <div className="pane">
       <div className="advice-note">
@@ -157,7 +164,8 @@ export default function AiPane({ caseDetail, aiStatus, onGotoReview, onFindingsC
 
       {/* ── 运行卡 + 报告区 ── */}
       {run && (
-        <RunCard run={run} nameOf={nameOf} onAbort={abortRun} onGotoReview={onGotoReview} />
+        <RunCard run={run} caseId={caseDetail.id} nameOf={nameOf}
+                 onAbort={abortRun} onGotoReview={onGotoReview} />
       )}
 
       {/* ── 历史 runs ── */}
@@ -228,7 +236,7 @@ const STOP_REASON_LABEL = {
   loop_detected: "检测到循环调用(loop_detected)",
 };
 
-function RunCard({ run, nameOf, onAbort, onGotoReview }) {
+function RunCard({ run, caseId, nameOf, onAbort, onGotoReview }) {
   const report = run.report || null;
   const usage = run.usage || null;
   const windows = report?.windows || [];
@@ -334,6 +342,13 @@ function RunCard({ run, nameOf, onAbort, onGotoReview }) {
             </ul>
           </div>
 
+          {/* 锚点按扫描轮次分组(仅展示层标注,播种逻辑不变):
+              用户能看出每条锚点是第几轮哪批规则跑出来的 */}
+          {anchors.length > 0 && (
+            <AnchorRounds caseId={caseId} sourceId={run.source_id}
+                          anchors={anchors} />
+          )}
+
           {report.synthesis && (
             <div className="report-seg">
               <div className="report-seg-title">综合 pass(AI 起草·推测待核,非结论)</div>
@@ -377,9 +392,65 @@ function RunCard({ run, nameOf, onAbort, onGotoReview }) {
   );
 }
 
+// 锚点按扫描轮次分组(展示层):锚点=pending 命中的行号,轮次从待审区
+// hits 的 round_no 反查(老数据 NULL=「历史」;查不到=如实标「未登记」)
+function AnchorRounds({ caseId, sourceId, anchors }) {
+  const [roundOf, setRoundOf] = useState(null); // "source_id:line_no" → round_no
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listHits(caseId, { limit: 1000 })
+      .then((r) => {
+        if (cancelled) return;
+        const m = {};
+        for (const h of r.items || []) {
+          m[`${h.source_id}:${h.line_no}`] = h.round_no;
+        }
+        setRoundOf(m);
+      })
+      .catch(() => !cancelled && setRoundOf({}));
+    return () => {
+      cancelled = true;
+    };
+  }, [caseId]);
+
+  if (!roundOf) return null;
+  const groups = {}; // 轮次标签 → 行号列表
+  for (const line of anchors) {
+    const rn = roundOf[`${sourceId}:${line}`];
+    const label = rn != null ? `R${rn}` : rn === null ? "历史" : "未登记";
+    (groups[label] = groups[label] || []).push(line);
+  }
+  // 轮次号升序,「历史」「未登记」排尾(确定性)
+  const order = (a, b) => {
+    const ra = /^R(\d+)$/.exec(a);
+    const rb = /^R(\d+)$/.exec(b);
+    if (ra && rb) return Number(ra[1]) - Number(rb[1]);
+    if (ra) return -1;
+    if (rb) return 1;
+    return a === "历史" ? -1 : 1;
+  };
+  return (
+    <div className="report-seg">
+      <div className="report-seg-title">锚点按扫描轮次分组({anchors.length})</div>
+      {Object.keys(groups).sort(order).map((label) => (
+        <div key={label} style={{ marginBottom: 2, fontSize: 12 }}>
+          <span className="badge badge-muted">{label}</span>{" "}
+          <span className="mono muted">
+            {groups[label].map((l) => `L${l}`).join(" ")}
+          </span>
+        </div>
+      ))}
+      <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>
+        轮次 = 该命中由第几轮规则扫描产出;「历史」= 轮次台账上线前的老数据。
+      </div>
+    </div>
+  );
+}
+
 // 每窗的如实说明:摘要 / 截断提示 / 跳过坏项 / 三重否定抑制 / ai_error
-function WindowNotes({ w }) {
-  const items = [];
+function WindowNotes({ w }) {  const items = [];
   const range = `L${w.from}~L${w.to}`;
   if (w.prompt_truncated) items.push(`窗口 ${range}:行数超提示上限,仅展示前段交 AI(截断如实)`);
   if (w.skipped_findings) items.push(`窗口 ${range}:${w.skipped_findings} 条坏 findings 被跳过(零静默)`);

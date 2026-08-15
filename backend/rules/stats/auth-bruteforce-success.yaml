@@ -1,0 +1,16 @@
+# 链式 motif:同 src_ip 对同 path 先一批 401/403,窗口内后接一个 200
+# (爆破成功链通用排查模式;只写协议常量状态码,不含任何案件特定值)
+id: auth-bruteforce-success
+title: 认证失败后成功链(401/403 → 200)
+operator: sequence
+severity: high
+key_fields: [src_ip, path]
+steps:
+  - {field: status, in: ["401", "403"]}
+  - {field: status, in: ["200"]}
+window_seconds: 300            # 末次失败后 5 分钟内的成功才成链
+min_first_step_count: 5        # 失败至少 5 次(防偶然试错误判)
+note: >-
+  依据:爆破排查的通用模式——同 IP 对同路径连续认证失败后在时间窗内出现
+  成功响应。命中≠成功入侵:正常用户多次输错密码后登录成功同样符合本链,
+  命中只进待审区交人复核;ts_utc 全 NULL 的源如实跳过(时间未知不硬猜)。

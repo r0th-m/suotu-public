@@ -113,21 +113,66 @@ export const api = {
 
   // ── M1:规则 / 候选命中 / 线索 ──
   listRules: (caseId) => req(`/cases/${caseId}/rules`),
-  // sourceId 为空 = 全案件扫描
-  runRules: (caseId, sourceId) =>
+  // sourceId 为空 = 全案件扫描;ruleIds 不传 = 全量(旧行为),
+  // 传数组 = 子集扫描(未知 id/未启用自定义后端 422 如实)
+  runRules: (caseId, sourceId, ruleIds) =>
     req(`/cases/${caseId}/rules:run`, {
       method: "POST",
-      json: sourceId ? { source_id: sourceId } : {},
+      json: {
+        ...(sourceId ? { source_id: sourceId } : {}),
+        ...(ruleIds ? { rule_ids: ruleIds } : {}),
+      },
     }),
-  listHits: (caseId, { status, severity, q, limit, offset } = {}) => {
+  // 扫描轮次台账(待审区轮次过滤下拉用)
+  listScanRounds: (caseId) => req(`/cases/${caseId}/scan-rounds`),
+  // ── 自定义规则治理(只有 enable 进扫描;内置规则永只读,id 冲突 409) ──
+  getCustomRule: (ruleId) => req(`/rules/custom/${encodeURIComponent(ruleId)}`),
+  // 创建恒 draft(人审转 enable 才进扫描);坏 YAML 后端 422 如实
+  createCustomRule: (yamlText) =>
+    req("/rules/custom", { method: "POST", json: { yaml_text: yamlText } }),
+  // 内容(yamlText,重过 schema 闸)和/或状态(draft|review|enable)
+  updateCustomRule: (ruleId, { yamlText, status } = {}) =>
+    req(`/rules/custom/${encodeURIComponent(ruleId)}`, {
+      method: "PUT",
+      json: {
+        ...(yamlText !== undefined ? { yaml_text: yamlText } : {}),
+        ...(status ? { status } : {}),
+      },
+    }),
+  // 只许删自定义(内置 id → 404 如实)
+  deleteCustomRule: (ruleId) =>
+    req(`/rules/custom/${encodeURIComponent(ruleId)}`, { method: "DELETE" }),
+  listHits: (caseId, { status, severity, q, round, hitId, limit, offset } = {}) => {
     const qs = new URLSearchParams();
     if (status && status !== "all") qs.set("status", status);
     if (severity) qs.set("severity", severity);
     if (q) qs.set("q", q);
+    if (round) qs.set("round", round);   // 轮次号 | history(老数据)
+    if (hitId) qs.set("hit_id", hitId);  // 精确锚定单条(记录区跳转用)
     if (limit !== undefined) qs.set("limit", String(limit));
     if (offset !== undefined) qs.set("offset", String(offset));
     return req(`/cases/${caseId}/hits?${qs.toString()}`);
   },
+  // ── 记录区(案件日志流):自动条目读取时合成 + 人工笔记 ──
+  getJournal: (caseId, { limit, offset } = {}) => {
+    const qs = new URLSearchParams();
+    if (limit !== undefined) qs.set("limit", String(limit));
+    if (offset !== undefined) qs.set("offset", String(offset));
+    return req(`/cases/${caseId}/journal?${qs.toString()}`);
+  },
+  // 锚点引用对象不存在后端 422 如实
+  addNote: (caseId, { body, anchorKind, anchorRef }) =>
+    req(`/cases/${caseId}/notes`, {
+      method: "POST",
+      json: {
+        body,
+        ...(anchorKind ? { anchor_kind: anchorKind } : {}),
+        ...(anchorRef ? { anchor_ref: anchorRef } : {}),
+      },
+    }),
+  // 仅本人可删(他人后端 403 如实)
+  deleteNote: (noteId) =>
+    req(`/notes/${encodeURIComponent(noteId)}`, { method: "DELETE" }),
   // 裁决:接受为线索 / 排除。note 可选;重复裁决后端回 409,由调用方如实提示。
   acceptHit: (id, note) =>
     req(`/hits/${id}:accept`, { method: "POST", json: { note: note || null } }),
