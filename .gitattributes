@@ -1,0 +1,2 @@
+# 应急包启动脚本必须字节级保留 CRLF+GBK,归一化成 LF 会让 cmd 解析错位
+packaging/*.bat -text

@@ -177,6 +177,14 @@ Unpack and run — nothing to install (bundled portable Python 3.11, Windows
 All data stays inside the pack's `data\` (the USB stick is the evidence
 carrier); **close the window before unplugging**.
 
+> **Fix log (2026-08-31)**: earlier packs shipped a `启动.bat` with Unix (LF)
+> line endings, which desyncs the cmd batch parser (field machines reported
+> "'XX' is not recognized as an internal or external command"); a historical
+> build also contained the Linux-ism `>/dev/null`. The launcher template is
+> now versioned at `packaging/启动.bat` (GBK + CRLF + code-page switch on the
+> first line, byte-verified) — never hand-edit its encoding or line endings.
+> See `packaging/README.md`.
+
 ### Option 2: From source (Windows/Linux)
 
 ```bash
